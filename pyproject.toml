@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "srth-new"
+version = "0.1.0"
+description = "Minimal Hydra-based ACT training and inference scaffold."
+requires-python = ">=3.10"
+dependencies = [
+  "h5py",
+  "hydra-core>=1.3",
+  "numpy",
+  "opencv-python",
+  "torch",
+  "torchvision",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

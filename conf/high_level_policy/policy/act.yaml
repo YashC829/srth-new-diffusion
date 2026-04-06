@@ -1,0 +1,14 @@
+name: ACT
+backbone: resnet18
+pretrained_backbone: false
+lr: 1.0e-5
+lr_backbone: 1.0e-5
+weight_decay: 1.0e-4
+kl_weight: 10
+hidden_dim: 512
+dim_feedforward: 3200
+enc_layers: 4
+dec_layers: 7
+nheads: 8
+dropout: 0.1
+position_embedding: sine

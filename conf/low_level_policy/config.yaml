@@ -1,0 +1,30 @@
+defaults:
+  - dataloader: example
+  - policy: act
+  - override hydra/job_logging: custom
+  - _self_
+
+seed: 1
+device: cuda
+
+train:
+  num_train_steps: 20000
+  num_warmup_steps: 2000
+  save_every: 50            # number of steps to save a last_checkpoint.ckpt
+  keep_every: 1000          # only keep ckpts saved every <keep_every> steps
+  validate_every: 20
+  checkpoint_dir: ${hydra:runtime.output_dir}/checkpoints
+
+wandb:
+  project: surpass_debugging
+  entity: gbyrd3-johns-hopkins-university
+  name: ll_policy_debug
+
+  # resume settings
+  resume: false        # or true
+  id: null             # optionally specify a run id
+  mode: online         # online OR offline OR disabled
+
+hydra:
+  run:
+    dir: /home/grayson/surpass/srth-new/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}

@@ -1,0 +1,32 @@
+name: example_dataset
+
+metadata_cfg:
+  dataset_dir: ???
+  train_tissue_ids: []
+  val_tissue_ids: []
+
+temportal_sampling_cfg:
+  history_len: 4
+  history_frame_gap: 30
+  prediction_offset: 15
+
+recovery_cfg:
+  recovery_probability: 0.2
+
+patch_extraction_cfg:
+  wrist_images_rel_width: 0.75
+  distance_from_border_y: 0.1
+  distance_from_border_x: 0.25
+
+multitask_labels:
+  - "is_correction"
+  - "dominant_moving_direction"
+  - "psm1_instrument"
+  - "curr_tube"
+  - "total_number_clips"
+  - "clip_loaded"
+  - "gallbladder_grabbed"
+  - "clips_left_tube"
+  - "clips_right_tube"
+  - "psm2_instrument_closed"
+  - "psm1_instrument_closed"

@@ -1,0 +1,18 @@
+defaults:
+  - task: example
+  - policy: act
+  - _self_
+
+seed: 1
+device: cuda
+batch_size: 1
+num_workers: 0
+checkpoint_path: ???
+stats_path: null
+split: val
+num_batches: 1
+output_path: null
+
+hydra:
+  run:
+    dir: outputs/inference/${now:%Y-%m-%d}/${now:%H-%M-%S}

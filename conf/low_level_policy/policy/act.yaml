@@ -1,0 +1,19 @@
+
+_target_: srth_new.low_level_policy.models.act_model.ACTPolicy
+
+args_override:
+  policy_class: ACT
+  lr: 1e-05
+  num_queries: 60
+  action_dim: 20
+  kl_weight: 10
+  hidden_dim: 512
+  dim_feedforward: 3200
+  lr_backbone: 1e-05
+  backbone: efficientnet_b3film
+  enc_layers: 4
+  dec_layers: 7
+  nheads: 8
+  camera_names: ["left", "left_wrist", "right_wrist"]
+  multi_gpu: false
+  use_language: true
