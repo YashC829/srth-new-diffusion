@@ -1,17 +1,17 @@
 defaults:
-  - task: example
-  - policy: act
+  - task: example   # Expected to define dataset_dir, camera_names, state_dim, action_dim, etc.
+  - policy: act     # Reuse the ACT architecture settings for evaluation.
   - _self_
 
 seed: 1
 device: cuda
-batch_size: 1
-num_workers: 0
-checkpoint_path: ???
-stats_path: null
-split: val
-num_batches: 1
-output_path: null
+batch_size: 1        # Inference is usually run one episode chunk at a time.
+num_workers: 0       # Keep at 0 for simple debugging unless dataset loading is heavy.
+checkpoint_path: ??? # Required path to a saved checkpoint.
+stats_path: null     # If null, inference looks for dataset_stats.pkl next to the checkpoint.
+split: val           # train OR val
+num_batches: 1       # Limit evaluation for quick smoke tests.
+output_path: null    # Optional path to save raw predictions / targets with torch.save.
 
 hydra:
   run:

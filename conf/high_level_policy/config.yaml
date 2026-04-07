@@ -1,6 +1,6 @@
 defaults:
-  - dataset: example
-  - policy: srth_original
+  - dataset: example      # Example dataset split and sampling settings.
+  - policy: srth_original # Intended default policy; verify this exists before running.
   - _self_
 
 seed: 1
@@ -8,8 +8,8 @@ device: cuda
 batch_size: 8
 num_workers: 4
 num_epochs: 1000
-validate_every: 20
-save_every: 200
+validate_every: 20   # Run validation every N epochs.
+save_every: 200      # Save a checkpoint every N epochs.
 checkpoint_dir: ${hydra:runtime.output_dir}/checkpoints
 
 hydra:

@@ -1,17 +1,17 @@
 defaults:
-  - task: example
+  - task: example   # Placeholder task config; fill in dataset- and task-specific fields.
   - policy: act
   - _self_
 
 seed: 1
 device: cuda
-batch_size: 1
+batch_size: 1        # Small batches keep debugging easy during inference.
 num_workers: 0
-checkpoint_path: ???
-stats_path: null
-split: val
-num_batches: 1
-output_path: null
+checkpoint_path: ??? # Required checkpoint path.
+stats_path: null     # Optional normalization stats path.
+split: val           # train OR val
+num_batches: 1       # Stop early for quick inspection runs.
+output_path: null    # Optional output file for serialized predictions.
 
 hydra:
   run:

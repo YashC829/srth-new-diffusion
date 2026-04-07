@@ -1,19 +1,19 @@
-
 _target_: srth_new.low_level_policy.models.act_model.ACTPolicy
+# Hydra will instantiate this class directly.
 
 args_override:
   policy_class: ACT
   lr: 1e-5
-  num_queries: 60
-  action_dim: 20
-  kl_weight: 10
-  hidden_dim: 512
-  dim_feedforward: 3200
-  lr_backbone: 1e-5
-  backbone: efficientnet_b3film
-  enc_layers: 4
-  dec_layers: 7
-  nheads: 8
-  camera_names: ["left", "left_wrist", "right_wrist"]
+  num_queries: 60                         # Usually should match the dataset chunk size.
+  action_dim: 20                          # Number of action dimensions predicted per timestep.
+  kl_weight: 10                           # Weight on the latent KL term in ACT.
+  hidden_dim: 512                         # Transformer hidden size.
+  dim_feedforward: 3200                   # Feedforward block width inside the transformer.
+  lr_backbone: 1e-5                       # Separate learning rate for the vision backbone.
+  backbone: efficientnet_b3film           # Image encoder variant.
+  enc_layers: 4                           # Number of transformer encoder layers.
+  dec_layers: 7                           # Number of transformer decoder layers.
+  nheads: 8                               # Multi-head attention heads.
+  camera_names: ["left", "left_wrist", "right_wrist"] # Expected image streams in each sample.
   multi_gpu: false
-  use_language: true
+  use_language: true                      # Must align with the dataloader language setting.

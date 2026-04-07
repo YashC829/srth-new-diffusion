@@ -1,18 +1,19 @@
 dataset_dir: /home/grayson/surpass/srth-surpass/raw_data/Cholecystectomy_grasp_only
+# Root directory containing the low-level training episodes.
 
-num_episodes_train: 100
-tissue_sample_ids_train: [1]
+num_episodes_train: 100      # Number of training episodes to sample from the listed tissues.
+tissue_sample_ids_train: [1] # Tissue/sample IDs used to build the training split.
 
-num_episodes_val: 28
-tissue_sample_ids_val: [2]
+num_episodes_val: 28         # Number of validation episodes to sample.
+tissue_sample_ids_val: [2]   # Tissue/sample IDs reserved for validation.
 
-action_mode: hybrid_relative      # hybrid_relative OR ego OR relative_endoscope
-norm_scheme: std                  # std OR min_max
-chunk_size: 60
-use_language: true
-language_encoder: distilbert      # currently only support distilbert
+action_mode: hybrid_relative      # How actions are represented in the dataset.
+norm_scheme: std                  # Normalization scheme for qpos/action values.
+chunk_size: 60                    # Number of action timesteps predicted per sample.
+use_language: true                # Whether to include language embeddings with each example.
+language_encoder: distilbert      # Currently only distilbert is supported.
 
-use_auto_label: false             # TODO: No clue what this does. Maybe remove?
+use_auto_label: false             # Reserved flag for auto-label behavior; currently unclear / experimental.
 
-batch_size: 12
-num_workers: 16
+batch_size: 12                    # Batch size for both train and validation dataloaders.
+num_workers: 16                   # DataLoader worker processes.

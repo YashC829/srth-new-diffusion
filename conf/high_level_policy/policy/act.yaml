@@ -1,14 +1,14 @@
 name: ACT
-backbone: resnet18
-pretrained_backbone: false
+backbone: resnet18            # Vision backbone used to encode image observations.
+pretrained_backbone: false    # Set true to start from pretrained vision weights.
 lr: 1.0e-5
-lr_backbone: 1.0e-5
+lr_backbone: 1.0e-5           # Separate learning rate for backbone parameters.
 weight_decay: 1.0e-4
-kl_weight: 10
-hidden_dim: 512
-dim_feedforward: 3200
-enc_layers: 4
-dec_layers: 7
-nheads: 8
+kl_weight: 10                 # KL regularization strength for latent ACT training.
+hidden_dim: 512               # Transformer hidden size.
+dim_feedforward: 3200         # Transformer MLP width.
+enc_layers: 4                 # Encoder depth.
+dec_layers: 7                 # Decoder depth.
+nheads: 8                     # Attention heads.
 dropout: 0.1
-position_embedding: sine
+position_embedding: sine      # Positional encoding strategy.

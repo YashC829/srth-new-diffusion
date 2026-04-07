@@ -1,24 +1,25 @@
 name: example_dataset
 
 metadata_cfg:
-  dataset_dir: ???
-  train_tissue_ids: []
-  val_tissue_ids: []
+  dataset_dir: ???      # Root directory containing the high-level dataset.
+  train_tissue_ids: []  # Tissue IDs assigned to the training split.
+  val_tissue_ids: []    # Tissue IDs assigned to the validation split.
 
 temportal_sampling_cfg:
-  history_len: 4
-  history_frame_gap: 30
-  prediction_offset: 15
+  history_len: 4         # Number of past frames / states included in each sample.
+  history_frame_gap: 30  # Temporal spacing between history frames.
+  prediction_offset: 15  # How far into the future the label should be predicted.
 
 recovery_cfg:
-  recovery_probability: 0.2
+  recovery_probability: 0.2 # Probability of sampling recovery examples, if supported downstream.
 
 patch_extraction_cfg:
-  wrist_images_rel_width: 0.75
-  distance_from_border_y: 0.1
-  distance_from_border_x: 0.25
+  wrist_images_rel_width: 0.75 # Relative crop width used around wrist camera views.
+  distance_from_border_y: 0.1  # Vertical crop margin as a fraction of image height.
+  distance_from_border_x: 0.25 # Horizontal crop margin as a fraction of image width.
 
 multitask_labels:
+  # Names of the supervised heads / labels expected from the dataset.
   - "is_correction"
   - "dominant_moving_direction"
   - "psm1_instrument"
