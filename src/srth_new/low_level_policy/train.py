@@ -56,7 +56,7 @@ def run_policy_step(
 
     # Compute Mean Metrics and Log to WandB and Local Files
     avg_metrics = utils.compute_dict_mean(metrics)
-    summary_prefix = "train" if optimizer is not None else "val"
+    summary_prefix = "train" if not run_val else "val"
     epoch_summary = {f"{summary_prefix}/{k}": v.item() for k, v in avg_metrics.items()}
     wandb.log(epoch_summary, step=step)
     log.info(f"{summary_prefix} - Step: {step} - Summary: {epoch_summary}")
@@ -77,6 +77,17 @@ def run_policy_step(
             },
             ckpt_path
         )
+
+class FrozenDataLoader:
+    def __init__(self, path, map_location="cpu"):
+        self.batches = torch.load(path, map_location=map_location)
+
+    def __iter__(self):
+        for batch in self.batches:
+            yield batch
+
+    def __len__(self):
+        return len(self.batches)
 
 @hydra.main(version_base=None, config_path="../../../conf/low_level_policy", config_name="config")
 def main(cfg: DictConfig) -> None:

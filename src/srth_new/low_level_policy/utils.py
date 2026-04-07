@@ -280,7 +280,7 @@ def load_dataset_stats(tissue_sample_ids_train, dataset_dir):
         "std": std.tolist(), 
         "min": min.tolist(), 
         "max": max.tolist(), 
-        "tissue_sample_ids_train": OmegaConf.to_container(tissue_sample_ids_train, resolve=True), 
+        "tissue_sample_ids_train": list(tissue_sample_ids_train), 
         "dataset_dir": dataset_dir
     }
     with open(constants.DATASET_STATS_CACHE_FILE, "w") as file:

@@ -1,2 +1,12 @@
+# run logs and outputs
 wandb
 outputs
+
+# caches
+.dataset_stats_cache
+
+.vscode
+
+__pycache__/
+*.pyc
+*.egg-info
