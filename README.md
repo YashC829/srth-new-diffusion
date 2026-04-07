@@ -41,10 +41,20 @@ Hydra loads [`conf/low_level_policy/config.yaml`](/home/grayson/surpass/srth-new
 
 ### Before You Run
 
-Update the dataset path in [`conf/low_level_policy/dataloader/example.yaml`](<repo_dir_root_path>/conf/low_level_policy/dataloader/example.yaml):
+Update the dataset path in [`conf/low_level_policy/dataloader/example.yaml`](/home/grayson/surpass/srth-new/conf/low_level_policy/dataloader/example.yaml):
 
 ```yaml
 dataset_dir: /path/to/your/dataset
+```
+
+Also, update the repo root path for the location of your run `output` folder:
+
+```yaml
+hydra:
+  run:
+    # Each run gets its own timestamped directory with logs, configs, and checkpoints.
+    ### UPDATE THE BELOW LINE ###
+    dir: <repo_dir_root_path>/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
 ```
 
 You will usually also want to review:
@@ -53,6 +63,62 @@ You will usually also want to review:
 - `num_episodes_train` / `num_episodes_val`
 - `batch_size`, `num_workers`, and `chunk_size`
 - `wandb.*` fields in [`conf/low_level_policy/config.yaml`](/home/grayson/surpass/srth-new/conf/low_level_policy/config.yaml)
+
+### Weights & Biases
+
+Low-level training initializes Weights & Biases from the `wandb` block in [`conf/low_level_policy/config.yaml`](/home/grayson/surpass/srth-new/conf/low_level_policy/config.yaml):
+
+```yaml
+wandb:
+  project: your_project_name
+  entity: your_team_or_username
+  name: experiment_name
+  resume: false
+  id: null
+  mode: online
+```
+
+What each field does:
+
+- `project`: the W&B project where runs will be logged
+- `entity`: your W&B username or team/org name
+- `name`: the display name shown in the W&B UI
+- `resume`: if `true`, restore the prior Hydra config and resume the W&B run
+- `id`: optional for fresh runs, required when `resume=true`
+- `mode`: `online`, `offline`, or `disabled`
+
+Common workflows:
+
+- Log normally:
+
+```bash
+python -m srth_new.low_level_policy.train \
+  wandb.project=my-project \
+  wandb.entity=my-team \
+  wandb.name=baseline-run
+```
+
+- Log offline and sync later:
+
+```bash
+python -m srth_new.low_level_policy.train wandb.mode=offline
+```
+
+- Disable W&B entirely:
+
+```bash
+python -m srth_new.low_level_policy.train wandb.mode=disabled
+```
+
+- Resume an existing run:
+
+```bash
+python -m srth_new.low_level_policy.train \
+  wandb.resume=true \
+  wandb.id=<existing_run_id>
+```
+
+When resuming, the training code reloads the saved Hydra config from W&B, so the resumed run uses the original experiment configuration instead of any accidental local drift.
 
 ### Common Overrides
 
@@ -82,11 +148,22 @@ ${hydra:runtime.output_dir}/checkpoints
 
 ## Low-Level Inference
 
-Incomplete.
+There is also a low-level inference script:
+
+```bash
+python -m srth_new.low_level_policy.inference
+```
+
+Before running it, you must set at least:
+
+- `checkpoint_path`
+- the task-specific dataset fields expected by [`conf/low_level_policy/inference.yaml`](/home/grayson/surpass/srth-new/conf/low_level_policy/inference.yaml)
+
+The current inference config is still a template and expects additional task configuration to be filled in for your dataset.
 
 ## High-Level Policy Status
 
-Incomplete.
+The high-level-policy config tree is present under [`conf/high_level_policy/`](/home/grayson/surpass/srth-new/conf/high_level_policy), but the corresponding training and inference entrypoints are still scaffolds. Treat those configs as reference templates rather than a fully wired training workflow.
 
 ## Hydra Config Guide
 
