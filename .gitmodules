@@ -1,0 +1,33 @@
+[submodule "catkin_ws/src/crtk/crtk_matlab_client"]
+	path = catkin_ws/src/crtk/crtk_matlab_client
+	url = https://github.com/collaborative-robotics/crtk_matlab_client.git
+[submodule "catkin_ws/src/crtk/crtk_msgs"]
+	path = catkin_ws/src/crtk/crtk_msgs
+	url = https://github.com/collaborative-robotics/crtk_msgs.git
+[submodule "catkin_ws/src/dvrk/dvrk_matlab"]
+	path = catkin_ws/src/dvrk/dvrk_matlab
+	url = https://github.com/jhu-dvrk/dvrk_matlab.git
+[submodule "catkin_ws/src/dvrk/dvrk_model"]
+	path = catkin_ws/src/dvrk/dvrk_model
+	url = https://github.com/jhu-dvrk/dvrk_model.git
+[submodule "catkin_ws/src/dvrk/dvrk-gravity-compensation"]
+	path = catkin_ws/src/dvrk/dvrk-gravity-compensation
+	url = https://github.com/jhu-dvrk/dvrk-gravity-compensation.git
+[submodule "catkin_ws/src/dvrk/dESSJ-firmware"]
+	path = catkin_ws/src/dvrk/dESSJ-firmware
+	url = https://github.com/jhu-dvrk/dESSJ-firmware.git
+[submodule "catkin_ws/src/crtk/crtk_python_client"]
+	path = catkin_ws/src/crtk/crtk_python_client
+	url = https://github.com/collaborative-robotics/crtk_python_client.git
+[submodule "catkin_ws/src/dvrk/dvrk_camera_registration"]
+	path = catkin_ws/src/dvrk/dvrk_camera_registration
+	url = https://github.com/jhu-dvrk/dvrk_camera_registration.git
+[submodule "catkin_ws/src/dvrk/dvrk_config_jhu"]
+	path = catkin_ws/src/dvrk/dvrk_config_jhu
+	url = https://github.com/jhu-dvrk/dvrk_config_jhu.git
+[submodule "catkin_ws/src/dvrk/dvrk_python"]
+	path = catkin_ws/src/dvrk/dvrk_python
+	url = https://github.com/jhu-dvrk/dvrk_python.git
+[submodule "catkin_ws/src/dvrk/dvrk_video"]
+	path = catkin_ws/src/dvrk/dvrk_video
+	url = https://github.com/jhu-dvrk/dvrk_video.git

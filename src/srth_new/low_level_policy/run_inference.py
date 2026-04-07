@@ -5,6 +5,7 @@ from pathlib import Path
 import hydra
 import torch
 from hydra.utils import to_absolute_path
+from hydra.utils import instantiate
 from omegaconf import DictConfig
 
 from .data import build_dataloader, discover_episode_paths, load_stats, split_episode_paths
@@ -12,36 +13,14 @@ from .policy import ACTPolicy
 from .utils import resolve_device, set_seed
 
 
-def build_policy_config(cfg: DictConfig) -> dict[str, object]:
-    return {
-        "backbone": cfg.policy.backbone,
-        "pretrained_backbone": cfg.policy.pretrained_backbone,
-        "lr": cfg.policy.lr,
-        "lr_backbone": cfg.policy.lr_backbone,
-        "weight_decay": cfg.policy.weight_decay,
-        "kl_weight": cfg.policy.kl_weight,
-        "hidden_dim": cfg.policy.hidden_dim,
-        "dim_feedforward": cfg.policy.dim_feedforward,
-        "enc_layers": cfg.policy.enc_layers,
-        "dec_layers": cfg.policy.dec_layers,
-        "nheads": cfg.policy.nheads,
-        "dropout": cfg.policy.dropout,
-        "position_embedding": cfg.policy.position_embedding,
-        "camera_names": list(cfg.task.camera_names),
-        "state_dim": cfg.task.state_dim,
-        "action_dim": cfg.task.action_dim,
-        "num_queries": cfg.task.chunk_size,
-    }
-
-
-def denormalize_actions(actions: torch.Tensor, stats: dict[str, object]) -> torch.Tensor:
-    action_mean = torch.from_numpy(stats["action_mean"]).view(1, 1, -1)
-    action_std = torch.from_numpy(stats["action_std"]).view(1, 1, -1)
-    return actions.cpu() * action_std + action_mean
-
-
 @hydra.main(version_base=None, config_path="../../conf", config_name="inference")
 def main(cfg: DictConfig) -> None:
+
+    
+
+
+
+
     set_seed(int(cfg.seed))
     device = resolve_device(str(cfg.device))
 

@@ -89,7 +89,7 @@ class FrozenDataLoader:
     def __len__(self):
         return len(self.batches)
 
-@hydra.main(version_base=None, config_path="../../../conf/low_level_policy", config_name="config")
+@hydra.main(version_base=None, config_path="../../../conf/low_level_policy", config_name="train")
 def main(cfg: DictConfig) -> None:
     utils.set_seed(1)
     cfg = utils.wandb_setup(cfg)

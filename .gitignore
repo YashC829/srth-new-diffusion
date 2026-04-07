@@ -10,3 +10,5 @@ outputs
 __pycache__/
 *.pyc
 *.egg-info
+
+saved_runs

@@ -1,6 +1,6 @@
 defaults:
-  - task: example   # Expected to define dataset_dir, camera_names, state_dim, action_dim, etc.
   - policy: act     # Reuse the ACT architecture settings for evaluation.
+  - override hydra/job_logging: custom # Write logs both to stdout and to the Hydra run dir.
   - _self_
 
 seed: 1
