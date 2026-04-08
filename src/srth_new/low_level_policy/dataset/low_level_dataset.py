@@ -4,20 +4,20 @@
 """
 
 import numpy as np
+from src.srth_new.general.utils import lang_encoding
 import torch
 import os
 import random
 
 import pandas as pd
 import cv2
-from omegaconf import DictConfig
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
 from pytransform3d import rotations, batch_rotations, transformations, trajectories
 from tqdm import tqdm
 import json
 
-from srth_new.general import utils as general_utils
+from srth_new.general.utils import processing, lang_encoding
 from srth_new.low_level_policy.dataset.img_aug import DataAug
 from srth_new.low_level_policy.dataset.normalization import compute_diffs
 
@@ -45,7 +45,7 @@ class EpisodicDatasetDvrkGeneric(torch.utils.data.Dataset):
         episode_ids,
         tissue_sample_ids, 
         dataset_dir,
-        dataset_stats: general_utils.DatasetStats,
+        dataset_stats: processing.DatasetStats,
         camera_names, 
         camera_file_suffixes,
         action_mode: str,
@@ -292,7 +292,7 @@ class EpisodicDatasetDvrkGeneric(torch.utils.data.Dataset):
                     phase_folder_name = "16_go_to_the_cutting_position_right_tube"
             # Extract the phase command from the folder name (removing the phase idx and the "_" in between the words)
             _, phase_command = phase_folder_name.split("_")[0], " ".join(phase_folder_name.split("_")[1:])
-            embedding = general_utils.encode_text(phase_command, encoder, tokenizer, model)
+            embedding = lang_encoding.encode_text(phase_command, encoder, tokenizer, model)
             phase_command_embeddings_dict[phase_folder_name]= (phase_command, embedding)
 
         return phase_command_embeddings_dict

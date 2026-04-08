@@ -8,19 +8,20 @@ from einops import rearrange
 import matplotlib.pyplot as plt
 import numpy as np
 from pytransform3d import rotations, batch_rotations, transformations, trajectories
-import rospy
-from rostopics import ros_topics
 from scipy.spatial.transform import Rotation as R
 from sklearn.preprocessing import normalize
 import torch
 
-from srth_new.general.utils import DatasetStats
+from src.srth_new.general.utils import processing
 from srth_new.low_level_policy.models.act_model import ACTPolicy
-from srth_new.general.utils import initialize_model_and_tokenizer, encode_text
+from src.srth_new.general.utils.lang_encoding import initialize_model_and_tokenizer, encode_text
 
 # From ros packages
 import crtk
 from dvrk_scripts.dvrk_control import example_application
+import rospy
+from rostopics import ros_topics
+from std_msgs.msg import Bool
 
 import logging
 log = logging.getLogger(__name__)
@@ -32,7 +33,7 @@ class LowLevelPolicy:
     def __init__(
             self,
             policy: ACTPolicy,
-            dataset_stats: DatasetStats,
+            dataset_stats: processing.DatasetStats,
         ):
         self.policy = policy
         self.dataset_stats = dataset_stats
@@ -83,136 +84,8 @@ class LowLevelPolicy:
         self.bridge = CvBridge()
         self.psm1_app = example_application(self.ral, "PSM1", 1)
         self.psm2_app = example_application(self.ral, "PSM2", 1)
-        # self.pause_sub = rospy.Subscriber("/pause_robot", Bool, self.pause_robot_callback, queue_size=10)
+        self.pause_sub = rospy.Subscriber("/pause_robot", Bool, self.pause_robot_callback, queue_size=10)
 
-    
-    ## ------------ helper functions for action -------------
-    def convert_6d_rot_to_quat(self, rots):
-        c1 = rots[:, 0:3]
-        c2 = rots[:, 3:6]
-        c1 = normalize(c1, axis=1)
-        dot_product = np.sum(c1 * c2, axis=1).reshape(-1, 1)
-        c2 = normalize(c2 - dot_product * c1, axis=1)
-        c3 = np.cross(c1, c2)
-        r_mat = np.dstack((c1, c2, c3))
-        rots = R.from_matrix(r_mat)
-        return rots.as_quat()
-
-    def convert_actions_to_SE3_then_final_actions(self, dts, dquats, qpos_psm, jaw_angles):
-        dquats = batch_rotations.batch_quaternion_wxyz_from_xyzw(dquats)
-        qpos_psm[3:7] = rotations.quaternion_wxyz_from_xyzw(qpos_psm[3:7])
-        dts_dquats = np.concatenate((dts, dquats), axis=1)
-        g_qpos = transformations.transform_from_pq(qpos_psm[0:7])
-        g_actions = trajectories.transforms_from_pqs(dts_dquats)
-        g_poses = trajectories.concat_one_to_many(g_qpos, g_actions)
-        output = np.zeros((dquats.shape[0], 8))
-        output[:, 0:3] = g_poses[:, 0:3, 3]
-        tmp = batch_rotations.quaternions_from_matrices(g_poses[:, 0:3, 0:3])
-        output[:, 3:7] = batch_rotations.batch_quaternion_xyzw_from_wxyz(tmp)
-        output[:, 7] = np.clip(jaw_angles, -0.698, 1.4)
-        return output
-
-    def compute_diff_actions_relative_endoscope(self, qpos, action):
-        """
-        qpos: current position [9]
-        action: actions commanded by the user [n_actions x 9]
-        returns: relative actions w.r.t qpos
-        """
-        # find diff first and then fill-in the quaternion differences properly
-        diff = action - qpos
-        quat_actions = action[:, 3:7]
-
-        r_actions = R.from_quat(quat_actions)
-        diff_rs = r_actions 
-        # extract their first two columns
-        diff_6d = diff_rs.as_matrix()[:,:,:2]
-        diff_6d = diff_6d.transpose(0,2,1).reshape(-1, 6) # first column then second column
-        
-        diff_expand = np.zeros((diff.shape[0], 10)) # TODO: hard-coded dim (10) for a single arm
-        diff_expand[:diff.shape[0], 0:diff.shape[1]] = diff 
-        diff = diff_expand
-
-        diff[:, 3:9] = diff_6d
-        diff[:, 9] = action[:, -1] # fill in the jaw angle (note: jaw angle is not relative)
-        return diff
-
-    def unnormalize_action(self, naction, norm_scheme):
-        action = None
-        if norm_scheme == "min_max":
-            action = (naction + 1) / 2 * (self.max_ - self.min_) + self.min_
-            action[:, 3:9] = naction[:, 3:9]
-            action[:, 13:19] = naction[:, 13:19]
-        elif norm_scheme == "std":
-            action = self.unnormalize_positions_only_std(naction)
-        else:
-            raise NotImplementedError
-        return action
-
-    def unnormalize_positions_only_std(self, diffs):
-        unnormalized = diffs * self.std + self.mean
-        unnormalized[:, 3:9] = diffs[:, 3:9]
-        unnormalized[:, 13:19] = diffs[:, 13:19]
-        return unnormalized
-
-    def convert_delta_6d_to_taskspace_quat(self, all_actions, all_actions_converted, qpos):
-        '''
-        convert delta rot into task-space quaternion rot
-        '''
-        # Gram-schmidt
-        c1 = all_actions[:, 3:6] # t x 3
-        c2 = all_actions[:, 6:9] # t x 3 
-        c1 = normalize(c1, axis = 1) # t x 3
-        dot_product = np.sum(c1 * c2, axis = 1).reshape(-1, 1)
-        c2 = normalize(c2 - dot_product*c1, axis = 1)
-        c3 = np.cross(c1, c2)
-        r_mat = np.dstack((c1, c2, c3)) # t x 3 x 3
-        # transform delta rot into task space
-        rots = R.from_matrix(r_mat)
-        rot_init = R.from_quat(qpos[3:7])
-        rots = (rot_init * rots).as_quat()
-        all_actions_converted[:, 3:7] = rots
-        return all_actions_converted
-    
-    
-    def convert_delta_6d_to_taskspace_quat_relative_endo(self, all_actions, all_actions_converted, qpos):
-        '''
-        convert delta rot into task-space quaternion rot
-        '''
-        # Gram-schmidt
-        c1 = all_actions[:, 3:6] # t x 3
-        c2 = all_actions[:, 6:9] # t x 3 
-        c1 = normalize(c1, axis = 1) # t x 3
-        dot_product = np.sum(c1 * c2, axis = 1).reshape(-1, 1)
-        c2 = normalize(c2 - dot_product*c1, axis = 1)
-        c3 = np.cross(c1, c2)
-        r_mat = np.dstack((c1, c2, c3)) # t x 3 x 3
-        # transform delta rot into task space
-        rots = R.from_matrix(r_mat).as_quat()
-        # rot_init = R.from_quat(qpos[3:7])
-        # rots = (rot_init * rots).as_quat()
-        all_actions_converted[:, 3:7] = rots
-        return all_actions_converted
-
-    def average_quaternions(self, quaternions, weights):
-        """
-        Average a set of quaternions using weighted averaging.
-        """
-        if isinstance(weights, torch.Tensor):
-            weights = weights.cpu().numpy()  # Move to CPU and convert to NumPy
-            quaternions = quaternions.cpu().numpy()
-        # Normalize weights to sum to 1
-        weights = np.array(weights, dtype=np.float64)
-        weights /= weights.sum()
-
-        # Quaternion averaging: weighted mean in quaternion space
-        avg_quat = np.zeros((4,))
-        for i, quat in enumerate(quaternions):
-            avg_quat += weights[i] * quat
-
-        # Normalize the resulting quaternion
-        avg_quat /= np.linalg.norm(avg_quat)
-        return avg_quat
-    
     ## --------------------- callbacks -----------------------
     
     def pause_robot_callback(self, msg):
@@ -337,11 +210,17 @@ class LowLevelPolicy:
                     qpos_zero = torch.zeros(1, 20).float().cuda()
                     
                     # use this if testing with real endoscope image
-                    curr_image = self.get_image_dvrk() 
+                    curr_image = self.get_image_dvrk()
 
                     action = self.policy(qpos_zero, curr_image, command_embedding=command_embedding).cpu().numpy().squeeze()
                     # TODO: The norm scheme is hardcoded but should be a policy member variable
-                    action = self.unnormalize_action(action, norm_scheme="std") 
+                    
+                    if self.policy.norm_scheme == "std":
+                        action = processing.unnormalize_positions_only_std(
+                            action, self.dataset_stats.mean, self.dataset_stats.std
+                        )
+                    else:
+                        raise NotImplementedError()
 
                     qpos_psm1 = np.array((self.rt.psm1_pose.position.x, self.rt.psm1_pose.position.y, self.rt.psm1_pose.position.z,
                                         self.rt.psm1_pose.orientation.x, self.rt.psm1_pose.orientation.y, self.rt.psm1_pose.orientation.z, self.rt.psm1_pose.orientation.w,
@@ -355,23 +234,23 @@ class LowLevelPolicy:
 
                         actions_psm1 = np.zeros((self.chunk_size, 8)) # pos, quat, jaw
                         actions_psm1[:, 0:3] = qpos_psm1[0:3] + action[:, 0:3] # convert to current translation
-                        actions_psm1 = self.convert_delta_6d_to_taskspace_quat(action[:, 0:10], actions_psm1, qpos_psm1)
+                        actions_psm1 = processing.convert_delta_6d_to_taskspace_quat(action[:, 0:10], actions_psm1, qpos_psm1)
                         actions_psm1[:, 7] = np.clip(action[:, 9], -0.698, 0.698)  # copy over gripper angles
                         
                         actions_psm2 = np.zeros((self.chunk_size, 8)) # pos, quat, jaw
                         actions_psm2[:, 0:3] = qpos_psm2[0:3] + action[:, 10:13] # convert to current translation
-                        actions_psm2 = self.convert_delta_6d_to_taskspace_quat(action[:, 10:], actions_psm2, qpos_psm2)
+                        actions_psm2 = processing.convert_delta_6d_to_taskspace_quat(action[:, 10:], actions_psm2, qpos_psm2)
                         actions_psm2[:, 7] = np.clip(action[:, 19], -0.698, 0.698)  # copy over gripper angles  
 
                     if self.action_mode == 'relative_endoscope':
                         actions_psm1 = np.zeros((self.chunk_size, 8)) # pos, quat, jaw
                         actions_psm1[:, 0:3] = qpos_psm1[0:3] + action[:, 0:3] # convert to current translation
-                        actions_psm1 = self.convert_delta_6d_to_taskspace_quat_relative_endo(action[:, 0:10], actions_psm1, qpos_psm1)
+                        actions_psm1 = processing.convert_delta_6d_to_taskspace_quat_relative_endo(action[:, 0:10], actions_psm1, qpos_psm1)
                         actions_psm1[:, 7] = np.clip(action[:, 9], -0.698, 0.698)  # copy over gripper angles
                         
                         actions_psm2 = np.zeros((self.chunk_size, 8)) # pos, quat, jaw
                         actions_psm2[:, 0:3] = qpos_psm2[0:3] + action[:, 10:13] # convert to current translation
-                        actions_psm2 = self.convert_delta_6d_to_taskspace_quat_relative_endo(action[:, 10:], actions_psm2, qpos_psm2)
+                        actions_psm2 = processing.convert_delta_6d_to_taskspace_quat_relative_endo(action[:, 10:], actions_psm2, qpos_psm2)
                         actions_psm2[:, 7] = np.clip(action[:, 19], -0.698, 0.698)  # copy over gripper angles  
                         
                     if self.action_mode == 'ego':

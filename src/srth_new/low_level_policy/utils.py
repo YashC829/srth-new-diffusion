@@ -15,8 +15,7 @@ from torch.utils.data import DataLoader, WeightedRandomSampler
 import wandb
 
 from srth_new.general import constants
-from srth_new.general.utils import DatasetStats
-from srth_new.low_level_policy.dataset.normalization import compute_diffs
+from srth_new.general.utils.processing import compute_diffs, DatasetStats
 from srth_new.low_level_policy.dataset.low_level_dataset import EpisodicDatasetDvrkGeneric
 from srth_new.general import constants
 

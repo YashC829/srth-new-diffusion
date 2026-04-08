@@ -37,8 +37,27 @@ import numpy as np
 import torch
 from torchvision import transforms
 
-from srth_new.general import utils
+from srth_new.general.utils import dataset, encoding
 from srth_new.general import constants
+
+
+
+def generate_command_embeddings(
+        unique_phase_folder_names, 
+        encoder, 
+        tokenizer, 
+        model
+    ):
+    # Returns a dictionary containing the phase command as key and a tuple of 
+    # the phase command and phase embedding as value
+    phase_command_embeddings_dict = {}    
+    for phase_folder_name in unique_phase_folder_names:
+        # Extract the phase command from the folder name
+        phase_command = phase_folder_name.split("_")[1]
+        embedding = encode_text(phase_command, encoder, tokenizer, model)
+        phase_command_embeddings_dict[phase_folder_name]= (phase_command, embedding)
+
+    return phase_command_embeddings_dict
 
 class HighLevelDatasetSRTH(torch.utils.data.Dataset):
     def __init__(
@@ -79,7 +98,7 @@ class HighLevelDatasetSRTH(torch.utils.data.Dataset):
         phase_info_dict = dict()
         for tissue_id in self.tissue_ids:
             tissue_dir = Path(cfg.dataset_dir).joinpath(constants.TISSUE_FOLDER_NAME(tissue_id))
-            phases = utils.get_sorted_phases(tissue_dir)
+            phases = dataset.get_sorted_phases(tissue_dir)
             [uq_phase_dir_names.add(x) for x in phases]
             for phase_dir in uq_phase_dir_names:
                 phase_info_dict[phase_dir] = list()
@@ -94,8 +113,8 @@ class HighLevelDatasetSRTH(torch.utils.data.Dataset):
 
         # Generate the embeddings for all phase commands
         encoder_name = "distilbert"
-        tokenizer, model = utils.initialize_model_and_tokenizer(encoder_name)
-        self.command_embeddings_dict = utils.generate_command_embeddings(
+        tokenizer, model = encoding.initialize_model_and_tokenizer(encoder_name)
+        self.command_embeddings_dict = generate_command_embeddings(
             uq_phase_dir_names, encoder_name, tokenizer, model
         ) 
         del tokenizer, model
