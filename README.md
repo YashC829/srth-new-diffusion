@@ -194,3 +194,58 @@ Useful Hydra patterns:
 
 - `README.md` and the example configs now include inline comments to clarify the most important fields.
 - The repository does not currently contain a top-level `requirements.txt`; use `environment.yml` or `pyproject.toml` as the source of truth for dependencies.
+
+
+### New README.md additions:
+
+- Add the following documentation for inference:
+  1. Build catkin workspace with this command: catkin build --cmake-args -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+  2. Source catkin workspace
+
+Install conda env from scratch: 
+
+The below is incredibly slow if you do not first install mamba and then perform
+the rest of the installations with mamba:
+
+```bash
+conda install -n base -c conda-forge mamba
+```
+
+mamba create -n srth-new -c conda-forge -c robostack-noetic \
+    python=3.11 \
+    ros-noetic-desktop
+
+mamba config --env --add channels robostack-noetic
+
+mamba install -c conda-forge ros-dev-tools \
+    ros-noetic-actionlib \
+    ros-noetic-camera-calibration \
+    ros-noetic-camera-calibration-parsers \
+    ros-noetic-catkin \
+    ros-noetic-controller-manager \
+    ros-noetic-controller-manager-msgs \
+    ros-noetic-cv-bridge \
+    ros-noetic-dynamic-reconfigure \
+    ros-noetic-genmsg \
+    ros-noetic-genpy \
+    ros-noetic-gencpp \
+    ros-noetic-geneus \
+    ros-noetic-genlisp \
+    ros-noetic-gennodejs \
+    ros-noetic-diagnostic-updater \
+    ros-noetic-diagnostic-analysis \
+    ros-noetic-diagnostic-common-diagnostics \
+    ros-noetic-gazebo-ros \
+    ros-noetic-gazebo-plugins \
+    ros-noetic-image-geometry \
+    ros-noetic-laser-geometry \
+    ros-noetic-message-filters \
+    ros-noetic-interactive-markers \
+    ros-noetic-joint-state-publisher \
+    ros-noetic-joint-state-publisher-gui \
+    breezy \
+    catkin_tools
+
+Install the requirements.txt: pip install -r requirements.txt
+
+Install the srth-new package: pip install -e .

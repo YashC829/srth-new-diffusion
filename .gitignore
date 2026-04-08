@@ -7,8 +7,15 @@ outputs
 
 .vscode
 
+# misc
 __pycache__/
 *.pyc
 *.egg-info
+
+# catkin_ws build directories
+.catkin_tools
+build
+devel
+logs
 
 saved_runs
