@@ -250,26 +250,24 @@ class EpisodicDatasetDvrkGeneric(torch.utils.data.Dataset):
         
         return False
 
-    def normalize_phase_folder_name(self, phase_folder_name):
-        if phase_folder_name.endswith("_recovery"):
-            phase_folder_name = phase_folder_name[:-9]
-        elif phase_folder_name.startswith("ACTUAL_CUTTING"):
-            if phase_folder_name.endswith("_left"):
-                phase_folder_name = "8_go_to_the_cutting_position_left_tube"
-            elif phase_folder_name.endswith("_right"):
-                phase_folder_name = "16_go_to_the_cutting_position_right_tube"
-        return phase_folder_name
-
     def get_command_texts(self, unique_phase_folder_names):
         phase_command_dict = {}
 
         for phase_folder_name in tqdm(unique_phase_folder_names, desc="Resolving phase commands"):
-            normalized_phase_name = self.normalize_phase_folder_name(phase_folder_name)
+            command_phase_name = phase_folder_name
+            if command_phase_name.endswith("_recovery"):
+                command_phase_name = command_phase_name[:-9]
+            elif command_phase_name.startswith("ACTUAL_CUTTING"):
+                if command_phase_name.endswith("_left"):
+                    command_phase_name = "8_go_to_the_cutting_position_left_tube"
+                elif command_phase_name.endswith("_right"):
+                    command_phase_name = "16_go_to_the_cutting_position_right_tube"
+
             _, phase_command = (
-                normalized_phase_name.split("_")[0],
-                " ".join(normalized_phase_name.split("_")[1:]),
+                command_phase_name.split("_")[0],
+                " ".join(command_phase_name.split("_")[1:]),
             )
-            phase_command_dict[normalized_phase_name] = phase_command
+            phase_command_dict[command_phase_name] = phase_command
 
         return phase_command_dict
 
@@ -731,11 +729,7 @@ class EpisodicDatasetDvrkGeneric(torch.utils.data.Dataset):
                 # -------------------------------
                 directional_label = None
 
-                is_recovery = self.is_recovery_episode(tissue_sample, phase, sample)
-                base_phase = self.normalize_phase_folder_name(phase)
-
-                if is_recovery:
-                    directional_label = get_auto_label(selected_csv, start_ts)
+                base_phase = phase
 
                 phase_command = self.command_text_dict.get(base_phase)
                 if phase_command is None:
