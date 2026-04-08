@@ -4,7 +4,6 @@
 """
 
 import numpy as np
-from src.srth_new.general.utils import lang_encoding
 import torch
 import os
 import random
@@ -17,9 +16,7 @@ from pytransform3d import rotations, batch_rotations, transformations, trajector
 from tqdm import tqdm
 import json
 
-from srth_new.general.utils import processing, lang_encoding
 from srth_new.low_level_policy.dataset.img_aug import DataAug
-from srth_new.low_level_policy.dataset.normalization import compute_diffs
 
 import bisect # Required for fast timestamp matching
 
@@ -45,14 +42,9 @@ class EpisodicDatasetDvrkGeneric(torch.utils.data.Dataset):
         episode_ids,
         tissue_sample_ids, 
         dataset_dir,
-        dataset_stats: processing.DatasetStats,
         camera_names, 
         camera_file_suffixes,
-        action_mode: str,
-        norm_scheme: str,
         chunk_size=100,
-        use_language=False,
-        language_encoder="distilbert",
 
         # TODO: There are a few places where use_auto_label significantly changes logic.
         # For now, set to False, but should probably understand a bit more what this does
@@ -65,15 +57,10 @@ class EpisodicDatasetDvrkGeneric(torch.utils.data.Dataset):
         self.episode_ids = episode_ids
         self.tissue_sample_ids = tissue_sample_ids
         self.dataset_dir = dataset_dir
-        self.dataset_stats = dataset_stats
         self.camera_names = camera_names
         self.camera_file_suffixes = camera_file_suffixes
-        self.action_mode = action_mode
-        self.norm_scheme = norm_scheme
         self.use_auto_label = use_auto_label # TODO: Should we remove this?
         self.chunk_size = chunk_size
-        self.use_language = use_language
-        self.language_encoder = language_encoder
 
         self.img_height, self.img_width = [360, 480]
         self.num_samples = len(episode_ids)
@@ -86,7 +73,7 @@ class EpisodicDatasetDvrkGeneric(torch.utils.data.Dataset):
                     "do not move"]
         # Load the tissue samples and their phases and demos (for later stitching of the episodes)        
         self.tissue_phase_demo_dict = {}
-        self.command_embeddings_dict = {}
+        self.command_text_dict = {}
         # Dictionary to track which episodes are recovery demos (new format)
         self.recovery_episodes = {}
 
@@ -158,29 +145,14 @@ class EpisodicDatasetDvrkGeneric(torch.utils.data.Dataset):
         self.num_samples = total_count
         log.info(f"total count: {total_count}")
         # log.info("self.command_embeddings_dict: ", self.command_embeddings_dict.keys())
-        ## create language embeddings
-        if self.use_language:
-
-            self.language_encoder = language_encoder
-            # tokenizer, model = initialize_model_and_tokenizer(self.language_encoder)
-            unique_phase_folder_names = np.unique([phase_folder_name for tissue_sample in self.tissue_phase_demo_dict.values() for phase_folder_name in tissue_sample.keys()])
-
-            # log.info("phase:", unique_phase_folder_names)
-            log.info("Generating Command Embeddings...")
-            # self.command_embeddings_dict[tissue_sample_name] = self.generate_command_embeddings(unique_phase_folder_names, self.language_encoder, tokenizer, model)
-            #if self.use_auto_label:
-            #    json_name = f"candidate_embeddings_corrections_{self.language_encoder}.json"
-            #else:
-            json_name = f"candidate_embeddings_{self.language_encoder}.json"
-            json_path = os.path.join(dataset_dir, json_name)
-
-            self.command_embeddings_dict = self.get_command_embeddings_from_json(unique_phase_folder_names, json_path)
-            # log.info(self.command_embeddings_dict.keys())
-            # log.info(self.command_embeddings_dict["1_needle_pickup"].keys())
-            # log.info("embeddings are the same:", self.command_embeddings_dict[tissue_sample_name] == self.command_embeddings_dict_json[tissue_sample_name])
-
-            # del tokenizer, model
-            # log.info(f"   {phase_sample}, {demo_samples}\n")
+        unique_phase_folder_names = np.unique(
+            [
+                phase_folder_name
+                for tissue_sample in self.tissue_phase_demo_dict.values()
+                for phase_folder_name in tissue_sample.keys()
+            ]
+        )
+        self.command_text_dict = self.get_command_texts(unique_phase_folder_names)
         self.all_samples = [(tissue_sample, phase, sample) 
                             for tissue_sample in self.tissue_phase_demo_dict
                             for phase in self.tissue_phase_demo_dict[tissue_sample]
@@ -278,213 +250,28 @@ class EpisodicDatasetDvrkGeneric(torch.utils.data.Dataset):
         
         return False
 
-    def generate_command_embeddings(self, unique_phase_folder_names, encoder, tokenizer, model):
+    def normalize_phase_folder_name(self, phase_folder_name):
+        if phase_folder_name.endswith("_recovery"):
+            phase_folder_name = phase_folder_name[:-9]
+        elif phase_folder_name.startswith("ACTUAL_CUTTING"):
+            if phase_folder_name.endswith("_left"):
+                phase_folder_name = "8_go_to_the_cutting_position_left_tube"
+            elif phase_folder_name.endswith("_right"):
+                phase_folder_name = "16_go_to_the_cutting_position_right_tube"
+        return phase_folder_name
 
-        # Returns a dictionary containing the phase command as key and a tuple of the phase command and phase embedding as value
-        phase_command_embeddings_dict = {}
-        for phase_folder_name in tqdm(unique_phase_folder_names, desc="Embedding phase commands"):
-            if phase_folder_name.endswith("_recovery"):
-                phase_folder_name = phase_folder_name[:-9]
-            elif phase_folder_name.startswith("ACTUAL_CUTTING"):
-                if phase_folder_name.endswith("_left"):
-                    phase_folder_name = "8_go_to_the_cutting_position_left_tube"
-                elif phase_folder_name.endswith("_right"):
-                    phase_folder_name = "16_go_to_the_cutting_position_right_tube"
-            # Extract the phase command from the folder name (removing the phase idx and the "_" in between the words)
-            _, phase_command = phase_folder_name.split("_")[0], " ".join(phase_folder_name.split("_")[1:])
-            embedding = lang_encoding.encode_text(phase_command, encoder, tokenizer, model)
-            phase_command_embeddings_dict[phase_folder_name]= (phase_command, embedding)
+    def get_command_texts(self, unique_phase_folder_names):
+        phase_command_dict = {}
 
-        return phase_command_embeddings_dict
+        for phase_folder_name in tqdm(unique_phase_folder_names, desc="Resolving phase commands"):
+            normalized_phase_name = self.normalize_phase_folder_name(phase_folder_name)
+            _, phase_command = (
+                normalized_phase_name.split("_")[0],
+                " ".join(normalized_phase_name.split("_")[1:]),
+            )
+            phase_command_dict[normalized_phase_name] = phase_command
 
-    def get_command_embeddings_from_json(self, unique_phase_folder_names, json_file_name):
-        phase_command_embeddings_dict = {}
-
-        try:
-            with open(json_file_name, "r") as f:
-                episode_data = json.load(f)
-        except FileNotFoundError:
-            log.info(f"File {json_file_name} not found.")
-            return phase_command_embeddings_dict
-        except json.JSONDecodeError:
-            log.info(f"Error decoding JSON from file {json_file_name}.")
-            return phase_command_embeddings_dict
-
-        for phase_folder_name in tqdm(unique_phase_folder_names, desc="Embedding phase commands"):
-            if phase_folder_name.endswith("_recovery"):
-                phase_folder_name = phase_folder_name[:-9]
-            elif phase_folder_name.startswith("ACTUAL_CUTTING"):
-                if phase_folder_name.endswith("_left"):
-                    phase_folder_name = "8_go_to_the_cutting_position_left_tube"
-                elif phase_folder_name.endswith("_right"):
-                    phase_folder_name = "16_go_to_the_cutting_position_right_tube"
-            # Extract the phase command from the folder name (removing the phase idx and the "_" in between the words)
-            _, phase_command = phase_folder_name.split("_")[0], " ".join(phase_folder_name.split("_")[1:])
-
-            if self.use_auto_label:
-                for label in self.arm_command_labels:
-                    phase_command_embeddings_dict.setdefault(phase_folder_name, {})
-                    if label != "do not move":
-                        combined_command = label
-                    else:
-                        combined_command = phase_command
-                    # Search for the command in the JSON data
-                    found_embedding = None
-                    # log.info(f"Searching for command: {combined_command}")
-                    for item in episode_data:
-                        # log.info(f"command: {item.get('command')}")
-                        # input("Press Enter to continue...")
-                        if isinstance(item, dict) and item.get('command') == combined_command:
-                            found_embedding = item.get('embedding')
-                            # log.info(f"Embedding found for command: {phase_command}")
-                            break
-                
-                    # Store the found embedding (if any)
-                    if found_embedding is not None:
-                        phase_command_embeddings_dict[phase_folder_name][label] = (combined_command, found_embedding)
-
-                    else:
-                        log.info(f"Embedding not found for command: {combined_command}")
-            else:
-                phase_command_embeddings_dict.setdefault(phase_folder_name, {})
-                found_embedding = None
-                for item in episode_data:
-                    if isinstance(item, dict) and item.get('command') == phase_command:
-                        found_embedding = item.get('embedding')
-                        break
-            
-                if found_embedding is not None:
-                    phase_command_embeddings_dict[phase_folder_name] = (phase_command, found_embedding)
-
-                else:
-                    log.info(f"Embedding not found for command: {phase_command}")
-
-        return phase_command_embeddings_dict
-
-
-    #### TODO:
-    # def append_point_to_text(self, points, language_embeddeings):
-
-    #     return new_embeddings
-
-    def compute_diff_actions(self, qpos, action):
-        """
-        qpos: current position [9]
-        action: actions commanded by the user [n_actions x 9]
-        returns: relative actions w.r.t qpos
-        """
-        # find diff first and then fill-in the quaternion differences properly
-        diff = action - qpos
-
-        quat_init = qpos[3:7]
-        quat_actions = action[:, 3:7]
-
-        # convert quaternions to rotation matrices
-        r_init = R.from_quat(quat_init)
-        r_actions = R.from_quat(quat_actions)
-        # find their diff
-        diff_rs = r_init.inv()*r_actions 
-        # extract their first two columns
-        diff_6d = diff_rs.as_matrix()[:,:,:2]
-        diff_6d = diff_6d.transpose(0,2,1).reshape(-1, 6) # first column then second column
-        
-        diff_expand = np.zeros((diff.shape[0], 10)) # TODO: hard-coded dim (10) for a single arm
-        diff_expand[:diff.shape[0], 0:diff.shape[1]] = diff 
-        diff = diff_expand
-
-        diff[:, 3:9] = diff_6d
-        diff[:, 9] = action[:, -1] # fill in the jaw angle (note: jaw angle is not relative)
-        return diff
-    
-    def compute_diff_actions_relative_endoscope(self, qpos, action):
-        """
-        qpos: current position [9]
-        action: actions commanded by the user [n_actions x 9]
-        returns: relative actions w.r.t qpos
-        """
-        # find diff first and then fill-in the quaternion differences properly
-        diff = action - qpos
-        quat_actions = action[:, 3:7]
-
-        r_actions = R.from_quat(quat_actions)
-        diff_rs = r_actions 
-        # extract their first two columns
-        diff_6d = diff_rs.as_matrix()[:,:,:2]
-        diff_6d = diff_6d.transpose(0,2,1).reshape(-1, 6) # first column then second column
-        
-        diff_expand = np.zeros((diff.shape[0], 10)) # TODO: hard-coded dim (10) for a single arm
-        diff_expand[:diff.shape[0], 0:diff.shape[1]] = diff 
-        diff = diff_expand
-
-        diff[:, 3:9] = diff_6d
-        diff[:, 9] = action[:, -1] # fill in the jaw angle (note: jaw angle is not relative)
-        return diff
-    
-    def compute_relative_actions_in_SE3(self, qpos, action):
-        """
-        Note: this is the proper implementation
-        qpos: current position (measured_cp), xyz, xyzw, jaw angle (8-dim vector)
-        action: set point on the dvrk (action_horizon x 8)
-        
-        returns: relative position and rotation w.r.t qpos
-        """
-        
-        diff = np.zeros((action.shape[0], 10)) # TODO: hard-coded dim (10) for a single arm
-
-        # convert current pose to SE(3)
-        qpos_wxyz = rotations.quaternion_wxyz_from_xyzw(qpos[3:7])
-        qpos_py3d = np.concatenate((qpos[0:3], qpos_wxyz))
-        g_qpos = transformations.transform_from_pq(qpos_py3d) # no jaw angle!
-
-        # convert actions to SE(3)
-        action_wxyz = batch_rotations.batch_quaternion_wxyz_from_xyzw(action[:, 3:7]) 
-        action_py3d = np.concatenate((action[:, 0:3], action_wxyz), axis = 1)
-        g_action = trajectories.transforms_from_pqs(action_py3d)
-
-        # invert current pose
-        g_qpos_inv = transformations.invert_transform(g_qpos)
-        diff_SE3 = trajectories.concat_one_to_many(g_qpos_inv, g_action)
-
-        # construct 6d rot
-        diff_6d = diff_SE3[:,0:3,:2]
-        diff_6d = diff_6d.transpose(0,2,1).reshape(-1, 6) # first column then second column
-        
-        # fill in translation elements
-        diff[:, 0:3] = diff_SE3[:, 0:3, 3] # replace the translations with the last column first three rows of SE3
-        # fill in 6d rot
-        diff[:, 3:9] = diff_6d
-        # fill in jaw angle (note: jaw angle is absolute, not relative)
-        diff[:, 9] = action[:, 7]
-        return diff
-
-    # misnomer: jaw angles are also being normalized
-    def min_max_scale_positions_only(self, diffs):
-        """
-        diffs: n_actions x 20
-        return: normalized n_actions x 20
-        Note: BOTH POSITIONS AND JAW ANGLES ARE NORMALIZED (orientations remain original)
-        """
-        normalized = (diffs - self.dataset_stats.min) / (self.dataset_stats.max - self.dataset_stats.min) * 2 - 1
-
-        # replace w/ originals for 6D rot
-        normalized[:, 3:9] = diffs[:, 3:9] # TODO: Note this is hardcoded with respect to action size!!!
-        normalized[:, 13:19] = diffs[:, 13:19] # TODO: Note this is hardcoded with respect to action size!!!
-
-        return normalized
-    
-    def standardize_positions_only(self, diffs):
-        """
-        diffs: n_actions x 20
-        return: normalized n_actions x 20 (zero mean unit variance)
-        Note: BOTH POSITIONS AND JAW ANGLES ARE NORMALIZED (orientations remain original)
-        """
-        normalized = (diffs - self.dataset_stats.mean) / self.dataset_stats.std
-
-        # replace w/ originals for 6D rot
-        normalized[:, 3:9] = diffs[:, 3:9] # TODO: Note this is hardcoded with respect to action size!!!
-        normalized[:, 13:19] = diffs[:, 13:19] # TODO: Note this is hardcoded with respect to action size!!!
-
-        return normalized
+        return phase_command_dict
 
 
     def preprocess_img(self, img, start_ts):
@@ -926,107 +713,40 @@ class EpisodicDatasetDvrkGeneric(torch.utils.data.Dataset):
                 qpos_psm2 = selected_csv[self.header_name_actions_psm2].iloc[start_ts, :].to_numpy()
                 action_psm2 = selected_csv[self.header_name_actions_psm2].iloc[start_ts:start_ts+400].to_numpy()
 
-                # compute relative actions
-                if self.action_mode == 'hybrid_relative':
-                    diff_psm1 = self.compute_diff_actions(qpos_psm1, action_psm1)
-                    diff_psm2 = self.compute_diff_actions(qpos_psm2, action_psm2)
-                elif self.action_mode == 'ego':
-                    diff_psm1 = self.compute_relative_actions_in_SE3(qpos_psm1, action_psm1)
-                    diff_psm2 = self.compute_relative_actions_in_SE3(qpos_psm2, action_psm2)
-                elif self.action_mode == 'relative_endoscope':
-                    diff_psm1 = self.compute_diff_actions_relative_endoscope(qpos_psm1, action_psm1)
-                    diff_psm2 = self.compute_diff_actions_relative_endoscope(qpos_psm2, action_psm2)
-
-                else:
-                    raise(NotImplementedError) 
-
-                # stack the actions along column dim
-                action = np.column_stack((diff_psm1, diff_psm2))
-
-                # normalize data
-                if self.norm_scheme == 'min_max': 
-                    action = self.min_max_scale_positions_only(action)
-                elif self.norm_scheme == 'std':
-                    action = self.standardize_positions_only(action)
-                else:
-                    raise NotImplementedError
-
                 action_len = min(episode_len - start_ts, 400)
-                padded_action = np.zeros((400, 20), dtype=np.float32)
-                padded_action[:action_len] = action
+                padded_action = np.zeros((400, 16), dtype=np.float32)
+                padded_action[:action_len] = np.column_stack((action_psm1, action_psm2))
                 is_pad = np.zeros(400)
                 is_pad[action_len:] = 1
 
-                # set current poses to zeros (dvrk kinematics unreliable)
-                qpos = np.zeros(20)
+                current_pose = np.concatenate((qpos_psm1, qpos_psm2)).astype(np.float32)
 
                 # construct observations
-                qpos_data = torch.from_numpy(qpos).float()
+                current_pose_data = torch.from_numpy(current_pose).float()
                 action_data = torch.from_numpy(padded_action).float()
                 is_pad = torch.from_numpy(is_pad).bool()
 
                 # -------------------------------
-                #  7. Command Embedding
+                #  7. Command Text
                 # -------------------------------
-                if self.use_language:
-                    directional_label = None
-                    
-                    # Check if this is a recovery episode using the new method
-                    is_recovery = self.is_recovery_episode(tissue_sample, phase, sample)
-                    
-                    # Get the base phase name (without '_recovery' suffix if present)
-                    base_phase = phase[:-9] if phase.endswith("_recovery") else phase
-                    
-                    if is_recovery:
-                        directional_label = get_auto_label(selected_csv, start_ts)
+                directional_label = None
 
-                    if self.use_auto_label:
-                        # For auto_label, embeddings_dict[phase] should be a dict of {label: (command, embedding)}
-                        phase_dict = self.command_embeddings_dict.get(base_phase)
-                        if phase_dict is None:
-                            raise ValueError(f"Phase '{base_phase}' not found in command_embeddings_dict")
-                        if not isinstance(phase_dict, dict):
-                            raise ValueError(f"Expected dict for phase '{base_phase}' with use_auto_label=True, got {type(phase_dict)}")
-                        command_tuple = phase_dict.get(directional_label, phase_dict.get("do not move"))
-                    else:
-                        # For non-auto_label, embeddings_dict[phase] should be a tuple (command, embedding)
-                        command_tuple = self.command_embeddings_dict.get(base_phase)
-                        if command_tuple is None:
-                            raise ValueError(f"Phase '{base_phase}' not found in command_embeddings_dict")
+                is_recovery = self.is_recovery_episode(tissue_sample, phase, sample)
+                base_phase = self.normalize_phase_folder_name(phase)
 
-                    # Validate command_tuple before unpacking
-                    if command_tuple is None:
-                        raise ValueError(f"Command tuple is None for phase: {base_phase}, directional_label: {directional_label}")
-                    
-                    if not isinstance(command_tuple, (tuple, list)) or len(command_tuple) != 2:
-                        raise ValueError(f"Command tuple has unexpected format for phase: {base_phase}. Got: {type(command_tuple)}")
-                    
-                    _, embedding = command_tuple
-                    
-                    # Ensure embedding is not None and convert to tensor properly
-                    if embedding is None:
-                        raise ValueError(f"Command embedding is None for phase: {base_phase}, directional_label: {directional_label}")
-                    
-                    # Convert to tensor - handle both list and numpy array inputs
-                    if isinstance(embedding, list):
-                        command_embedding = torch.tensor(embedding, dtype=torch.float32)
-                    elif isinstance(embedding, np.ndarray):
-                        command_embedding = torch.from_numpy(embedding).float()
-                    else:
-                        command_embedding = torch.as_tensor(embedding, dtype=torch.float32)
-                    
-                    # Ensure it's 1D - flatten to vector if needed
-                    if command_embedding.dim() > 1:
-                        command_embedding = command_embedding.flatten()
-                    
-                    # Final validation before returning
-                    if command_embedding is None or command_embedding.numel() == 0:
-                        raise ValueError(f"Invalid command_embedding for phase: {base_phase}, directional_label: {directional_label}, "
-                                       f"tissue: {tissue_sample}, sample: {sample}, index: {index}, shape: {command_embedding.shape if command_embedding is not None else 'None'}")
-                    
-                    return image_data, qpos_data, action_data, is_pad, command_embedding
+                if is_recovery:
+                    directional_label = get_auto_label(selected_csv, start_ts)
 
-                return image_data, qpos_data, action_data, is_pad
+                phase_command = self.command_text_dict.get(base_phase)
+                if phase_command is None:
+                    raise ValueError(f"Phase '{base_phase}' not found in command_text_dict")
+
+                if self.use_auto_label and directional_label is not None and directional_label != "do not move":
+                    command_text = directional_label
+                else:
+                    command_text = phase_command
+
+                return image_data, current_pose_data, action_data, is_pad, command_text
             
             # Handle FileNotFoundError during image loading - retry with different start_ts
             except FileNotFoundError as e:
@@ -1076,7 +796,6 @@ if __name__ == "__main__":
     # path_to_dataset = "/home/imerse/chole_ws/data"
 
     dataset_dir = os.path.join(path_to_dataset, "cnh_exvivo_chole")
-    use_language_flag = True
     from dvrk_scripts.constants_dvrk import TASK_CONFIGS
     task_config = TASK_CONFIGS['cnh_exvivo_chole_4_mono']
     camera_names = task_config['camera_names']
@@ -1092,26 +811,14 @@ if __name__ == "__main__":
                 dataset_dir,
                 camera_names,
                 camera_file_suffixes,
-                # num_episodes,
-                task_config,
                 chunk_size=60,
-                use_language=use_language_flag
                 )
     for i in range(10):
 
         # Sample a random item from the dataset
         rdm_idx = np.random.randint(0, len(dataset))
         log.info("idx:", rdm_idx)
-        if use_language_flag:
-            if no_qpos:
-                image_data, action_data, is_pad, command_embedding = dataset[rdm_idx]
-            else:
-                image_data, qpos_data, action_data, is_pad, command_embedding = dataset[rdm_idx]
-        else:
-            if no_qpos:
-                image_data, action_data, is_pad = dataset[rdm_idx]
-            else:
-                image_data, qpos_data, action_data, is_pad = dataset[rdm_idx]   
+        image_data, current_pose_data, action_data, is_pad, command_text = dataset[rdm_idx]
 
 
         # Create a figure with subplots: one row per timestamp, one column per camera

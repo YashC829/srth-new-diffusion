@@ -49,7 +49,7 @@ def main(cfg: DictConfig) -> None:
 
     policy = ACTPolicy(build_policy_config(cfg)).to(device)
     checkpoint = torch.load(checkpoint_path, map_location=device)
-    policy.deserialize(checkpoint["model_state_dict"])
+    policy.deserialize(checkpoint.get("policy_state", checkpoint["model_state_dict"]))
     policy.eval()
 
     outputs = []

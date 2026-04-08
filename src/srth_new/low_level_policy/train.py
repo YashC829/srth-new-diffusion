@@ -34,8 +34,8 @@ def run_policy_step(
         with torch.inference_mode():
             policy.eval()
             for data in dataloader:
-                image_data, qpos_data, action_data, is_pad, command_embedding = utils.collect_data(data, device)
-                forward_dict = policy(qpos_data, image_data, action_data, is_pad, command_embedding)
+                image_data, current_pose_data, action_data, is_pad, command_text = utils.collect_data(data, device)
+                forward_dict = policy(image_data, current_pose_data, action_data, is_pad, command_text)
 
                 metrics.append(utils.detach_dict(forward_dict))
     
@@ -43,8 +43,8 @@ def run_policy_step(
     else:
         policy.train()
         for data in dataloader:
-            image_data, qpos_data, action_data, is_pad, command_embedding = utils.collect_data(data, device)
-            forward_dict = policy(qpos_data, image_data, action_data, is_pad, command_embedding)
+            image_data, current_pose_data, action_data, is_pad, command_text = utils.collect_data(data, device)
+            forward_dict = policy(image_data, current_pose_data, action_data, is_pad, command_text)
 
             loss = forward_dict["loss"]
             loss.backward()
@@ -70,7 +70,8 @@ def run_policy_step(
         ckpt_path = Path(train_cfg.checkpoint_dir).joinpath(f"train_step_{step}.ckpt")
         torch.save(
             {
-                "model_state_dict": policy.serialize(),
+                "model_state_dict": policy.state_dict(),
+                "policy_state": policy.serialize(),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "scheduler_state_dict": scheduler.state_dict(),
                 "step": step,
@@ -78,23 +79,13 @@ def run_policy_step(
             ckpt_path
         )
 
-class FrozenDataLoader:
-    def __init__(self, path, map_location="cpu"):
-        self.batches = torch.load(path, map_location=map_location)
-
-    def __iter__(self):
-        for batch in self.batches:
-            yield batch
-
-    def __len__(self):
-        return len(self.batches)
-
 @hydra.main(version_base=None, config_path="../../../conf/low_level_policy", config_name="train")
 def main(cfg: DictConfig) -> None:
     utils.set_seed(1)
     cfg = utils.wandb_setup(cfg)
-    train_loader, val_loader = utils.load_dataloaders(cfg.dataloader)
+    train_loader, val_loader, dataset_stats = utils.load_dataloaders(cfg.dataloader)
     policy = instantiate(cfg.policy)
+    policy.set_dataset_stats(dataset_stats)
     optimizer = policy.configure_optimizers()
     scheduler = utils.get_cosine_schedule_with_warmup(
         optimizer, 

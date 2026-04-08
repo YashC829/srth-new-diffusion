@@ -7,11 +7,7 @@ tissue_sample_ids_train: [1] # Tissue/sample IDs used to build the training spli
 num_episodes_val: 28         # Number of validation episodes to sample.
 tissue_sample_ids_val: [2]   # Tissue/sample IDs reserved for validation.
 
-action_mode: hybrid_relative      # How actions are represented in the dataset.
-norm_scheme: std                  # Normalization scheme for qpos/action values.
 chunk_size: 60                    # Number of action timesteps predicted per sample.
-use_language: true                # Whether to include language embeddings with each example.
-language_encoder: distilbert      # Currently only distilbert is supported.
 
 use_auto_label: false             # Reserved flag for auto-label behavior; currently unclear / experimental.
 

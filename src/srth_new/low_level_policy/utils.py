@@ -306,20 +306,13 @@ def load_dataloaders(cfg: DictConfig):
 
     dataset_stats = load_dataset_stats(cfg.tissue_sample_ids_train, cfg.dataset_dir)
 
-    temp_debug_dataset_stats = load_dataset_stats([1, 2], cfg.dataset_dir)
-
     train_dataset = EpisodicDatasetDvrkGeneric(
         train_indices,
         cfg.tissue_sample_ids_train,
         cfg.dataset_dir,
-        temp_debug_dataset_stats,
         camera_names,
         camera_file_suffixes,
-        cfg.action_mode,
-        cfg.norm_scheme,
         cfg.chunk_size,
-        cfg.use_language,
-        cfg.language_encoder,
         cfg.use_auto_label
     )
 
@@ -327,14 +320,9 @@ def load_dataloaders(cfg: DictConfig):
         val_indices,
         cfg.tissue_sample_ids_val,
         cfg.dataset_dir,
-        dataset_stats,
         camera_names,
         camera_file_suffixes,
-        cfg.action_mode,
-        cfg.norm_scheme,
         cfg.chunk_size,
-        cfg.use_language,
-        cfg.language_encoder,
         cfg.use_auto_label
     )
 
@@ -355,7 +343,7 @@ def load_dataloaders(cfg: DictConfig):
         num_workers=cfg.num_workers,  persistent_workers=True
     )
 
-    return train_dataloader, val_dataloader
+    return train_dataloader, val_dataloader, dataset_stats
 
 def get_cosine_schedule_with_warmup(
     optimizer, num_warmup_steps, num_training_steps, num_cycles=0.5
@@ -379,13 +367,13 @@ def detach_dict(d):
     return new_d
 
 def collect_data(data, device: torch.device):
-    image_data, qpos_data, action_data, is_pad, command_embedding = data
+    image_data, current_pose_data, action_data, is_pad, command_text = data
     return (
         image_data.to(device), 
-        qpos_data.to(device), 
-        action_data.to(device), 
+        current_pose_data,
+        action_data,
         is_pad.to(device), 
-        command_embedding.to(device)
+        list(command_text) if isinstance(command_text, tuple) else command_text
     )
 
 def compute_dict_mean(epoch_dicts):

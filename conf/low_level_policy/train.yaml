@@ -28,4 +28,4 @@ wandb:
 hydra:
   run:
     # Each run gets its own timestamped directory with logs, configs, and checkpoints.
-    dir: <repo_dir_root_path>/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: /home/grayson/surpass/srth-new/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}

@@ -6,6 +6,8 @@ from torch import nn
 from torchvision import transforms
 from torch.nn import functional as F
 
+from srth_new.general.utils import processing
+from srth_new.general.utils.lang_encoding import encode_text, initialize_model_and_tokenizer
 from srth_new.low_level_policy.models.detr.main import build_ACT_model_and_optimizer
 from .backbone import build_backbone
 from .transformer import TransformerEncoder, TransformerEncoderLayer, build_transformer
@@ -185,33 +187,315 @@ class ACTPolicy(nn.Module):
         self.model = model  # CVAE decoder
         self.optimizer = optimizer
         self.kl_weight = args_override["kl_weight"]
+        self.action_dim = int(args_override["action_dim"])
+        self.state_dim = int(args_override["action_dim"])
+        self.action_mode = str(args_override.get("action_mode", "hybrid_relative"))
+        self.norm_scheme = str(args_override.get("norm_scheme", "std"))
+        self.use_language = bool(args_override.get("use_language", False))
+        self.language_encoder = str(args_override.get("language_encoder", "distilbert"))
+        self.image_normalize = transforms.Normalize(
+            mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+        )
+        self._command_embedding_cache = {}
+        self.tokenizer = None
+        self.language_model = None
+        if self.use_language:
+            self.tokenizer, self.language_model = initialize_model_and_tokenizer(
+                self.language_encoder
+            )
+            self.language_model.eval()
+
+        self.register_buffer("stats_mean", torch.zeros(self.action_dim))
+        self.register_buffer("stats_std", torch.ones(self.action_dim))
+        self.register_buffer("stats_min", torch.zeros(self.action_dim))
+        self.register_buffer("stats_max", torch.zeros(self.action_dim))
+        self.register_buffer("has_dataset_stats", torch.tensor(False))
+        self.stats_dataset_dir = None
+        self.stats_tissue_sample_ids_train = None
         log.info(f"KL Weight {self.kl_weight}")
         multi_gpu = args_override["multi_gpu"]
         self.num_queries = (
             self.model.module.num_queries if multi_gpu else self.model.num_queries
         )
 
-    def __call__(self, qpos, image, actions=None, is_pad=None, command_embedding=None):
-        env_state = None
-        normalize = transforms.Normalize(
-            mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+    def set_dataset_stats(self, dataset_stats: processing.DatasetStats) -> None:
+        self.stats_mean.copy_(torch.as_tensor(dataset_stats.mean, dtype=torch.float32))
+        self.stats_std.copy_(torch.as_tensor(dataset_stats.std, dtype=torch.float32))
+        self.stats_min.copy_(torch.as_tensor(dataset_stats.min, dtype=torch.float32))
+        self.stats_max.copy_(torch.as_tensor(dataset_stats.max, dtype=torch.float32))
+        self.has_dataset_stats.fill_(True)
+        self.stats_dataset_dir = dataset_stats.dataset_dir
+        self.stats_tissue_sample_ids_train = list(dataset_stats.tissue_sample_ids_train)
+
+    def export_dataset_stats(self) -> processing.DatasetStats:
+        if not bool(self.has_dataset_stats.item()):
+            raise RuntimeError("Dataset statistics have not been set on the policy.")
+
+        return processing.DatasetStats(
+            mean=self.stats_mean.detach().cpu().numpy().copy(),
+            std=self.stats_std.detach().cpu().numpy().copy(),
+            min=self.stats_min.detach().cpu().numpy().copy(),
+            max=self.stats_max.detach().cpu().numpy().copy(),
+            dataset_dir=self.stats_dataset_dir,
+            tissue_sample_ids_train=list(self.stats_tissue_sample_ids_train or []),
         )
-        image = normalize(image)
+
+    def _encode_command_text(self, command_text, device: torch.device):
+        if not self.use_language:
+            return None
+        if command_text is None:
+            raise ValueError("command_text is required when use_language=True")
+
+        if isinstance(command_text, str):
+            texts = [command_text]
+        else:
+            texts = list(command_text)
+
+        embeddings = []
+        for text in texts:
+            if text not in self._command_embedding_cache:
+                embedding = torch.as_tensor(
+                    encode_text(
+                        text,
+                        self.language_encoder,
+                        self.tokenizer,
+                        self.language_model,
+                    ),
+                    dtype=torch.float32,
+                ).flatten()
+                self._command_embedding_cache[text] = embedding.cpu()
+            embeddings.append(self._command_embedding_cache[text])
+
+        return torch.stack(embeddings, dim=0).to(device)
+
+    def _require_dataset_stats(self) -> None:
+        if not bool(self.has_dataset_stats.item()):
+            raise RuntimeError(
+                "Dataset statistics must be set on the policy before normalization."
+            )
+
+    @staticmethod
+    def _preserve_rotation_columns(normalized: torch.Tensor, raw: torch.Tensor) -> torch.Tensor:
+        normalized[..., 3:9] = raw[..., 3:9]
+        normalized[..., 13:19] = raw[..., 13:19]
+        return normalized
+
+    def normalize_actions(self, actions: torch.Tensor) -> torch.Tensor:
+        self._require_dataset_stats()
+        stats_mean = self.stats_mean.to(device=actions.device, dtype=actions.dtype)
+        stats_std = self.stats_std.to(device=actions.device, dtype=actions.dtype)
+        stats_min = self.stats_min.to(device=actions.device, dtype=actions.dtype)
+        stats_max = self.stats_max.to(device=actions.device, dtype=actions.dtype)
+
+        if self.norm_scheme == "std":
+            normalized = (actions - stats_mean) / stats_std
+        elif self.norm_scheme == "min_max":
+            normalized = (actions - stats_min) / (stats_max - stats_min) * 2 - 1
+        else:
+            raise NotImplementedError(f"Unsupported norm scheme: {self.norm_scheme}")
+
+        return self._preserve_rotation_columns(normalized, actions)
+
+    def denormalize_actions(self, actions: torch.Tensor) -> torch.Tensor:
+        self._require_dataset_stats()
+        stats_mean = self.stats_mean.to(device=actions.device, dtype=actions.dtype)
+        stats_std = self.stats_std.to(device=actions.device, dtype=actions.dtype)
+        stats_min = self.stats_min.to(device=actions.device, dtype=actions.dtype)
+        stats_max = self.stats_max.to(device=actions.device, dtype=actions.dtype)
+
+        if self.norm_scheme == "std":
+            denormalized = actions * stats_std + stats_mean
+        elif self.norm_scheme == "min_max":
+            denormalized = (actions + 1) / 2 * (stats_max - stats_min) + stats_min
+        else:
+            raise NotImplementedError(f"Unsupported norm scheme: {self.norm_scheme}")
+
+        return self._preserve_rotation_columns(denormalized, actions)
+
+    def _convert_single_raw_action_sequence_to_policy_actions(
+        self,
+        current_pose: np.ndarray,
+        actions: np.ndarray,
+    ) -> np.ndarray:
+        qpos_psm1 = current_pose[:8]
+        qpos_psm2 = current_pose[8:16]
+        actions_psm1 = actions[:, :8]
+        actions_psm2 = actions[:, 8:16]
+
+        if self.action_mode == "hybrid_relative":
+            diff_psm1 = processing.computer_diff_actions(qpos_psm1, actions_psm1)
+            diff_psm2 = processing.computer_diff_actions(qpos_psm2, actions_psm2)
+        elif self.action_mode == "ego":
+            diff_psm1 = processing.compute_relative_actions_in_SE3(qpos_psm1, actions_psm1)
+            diff_psm2 = processing.compute_relative_actions_in_SE3(qpos_psm2, actions_psm2)
+        elif self.action_mode == "relative_endoscope":
+            diff_psm1 = processing.compute_diff_actions_relative_endoscope(qpos_psm1, actions_psm1)
+            diff_psm2 = processing.compute_diff_actions_relative_endoscope(qpos_psm2, actions_psm2)
+        else:
+            raise NotImplementedError(f"Unsupported action mode: {self.action_mode}")
+
+        return np.column_stack((diff_psm1, diff_psm2)).astype(np.float32)
+
+    def prepare_actions_for_training(
+        self,
+        current_pose: torch.Tensor,
+        actions: torch.Tensor,
+        is_pad: torch.Tensor,
+        device: torch.device,
+    ) -> torch.Tensor:
+        if current_pose.dim() == 1:
+            current_pose = current_pose.unsqueeze(0)
+        if actions.dim() == 2:
+            actions = actions.unsqueeze(0)
+        if is_pad.dim() == 1:
+            is_pad = is_pad.unsqueeze(0)
+
+        current_pose_np = current_pose.detach().cpu().numpy()
+        actions_np = actions.detach().cpu().numpy()
+        is_pad_np = is_pad.detach().cpu().numpy().astype(bool)
+
+        policy_actions_np = np.zeros(
+            (actions_np.shape[0], actions_np.shape[1], self.action_dim),
+            dtype=np.float32,
+        )
+        for batch_idx, (pose, action, pad_mask) in enumerate(
+            zip(current_pose_np, actions_np, is_pad_np)
+        ):
+            valid_mask = ~pad_mask
+            if not np.any(valid_mask):
+                continue
+
+            valid_actions = action[valid_mask]
+            converted_actions = self._convert_single_raw_action_sequence_to_policy_actions(
+                pose, valid_actions
+            )
+            policy_actions_np[batch_idx, valid_mask] = converted_actions
+
+        policy_actions = torch.from_numpy(policy_actions_np).to(device=device, dtype=torch.float32)
+        policy_actions = self.normalize_actions(policy_actions)
+        policy_actions = policy_actions.masked_fill(is_pad.unsqueeze(-1), 0.0)
+        return policy_actions
+
+    def _convert_single_policy_actions_to_absolute(
+        self,
+        current_pose: np.ndarray,
+        actions: np.ndarray,
+    ) -> np.ndarray:
+        qpos_psm1 = current_pose[:8]
+        qpos_psm2 = current_pose[8:16]
+        chunk_size = actions.shape[0]
+
+        if self.action_mode == "hybrid_relative":
+            actions_psm1 = np.zeros((chunk_size, 8), dtype=np.float32)
+            actions_psm1[:, 0:3] = qpos_psm1[0:3] + actions[:, 0:3]
+            actions_psm1 = processing.convert_delta_6d_to_taskspace_quat(
+                actions[:, 0:10], actions_psm1, qpos_psm1.copy()
+            )
+            actions_psm1[:, 7] = np.clip(actions[:, 9], -0.698, 0.698)
+
+            actions_psm2 = np.zeros((chunk_size, 8), dtype=np.float32)
+            actions_psm2[:, 0:3] = qpos_psm2[0:3] + actions[:, 10:13]
+            actions_psm2 = processing.convert_delta_6d_to_taskspace_quat(
+                actions[:, 10:20], actions_psm2, qpos_psm2.copy()
+            )
+            actions_psm2[:, 7] = np.clip(actions[:, 19], -0.698, 0.698)
+        elif self.action_mode == "relative_endoscope":
+            actions_psm1 = np.zeros((chunk_size, 8), dtype=np.float32)
+            actions_psm1[:, 0:3] = qpos_psm1[0:3] + actions[:, 0:3]
+            actions_psm1 = processing.convert_delta_6d_to_taskspace_quat_relative_endo(
+                actions[:, 0:10], actions_psm1, qpos_psm1.copy()
+            )
+            actions_psm1[:, 7] = np.clip(actions[:, 9], -0.698, 0.698)
+
+            actions_psm2 = np.zeros((chunk_size, 8), dtype=np.float32)
+            actions_psm2[:, 0:3] = qpos_psm2[0:3] + actions[:, 10:13]
+            actions_psm2 = processing.convert_delta_6d_to_taskspace_quat_relative_endo(
+                actions[:, 10:20], actions_psm2, qpos_psm2.copy()
+            )
+            actions_psm2[:, 7] = np.clip(actions[:, 19], -0.698, 0.698)
+        elif self.action_mode == "ego":
+            actions_psm1 = processing.convert_actions_to_SE3_then_final_actions(
+                actions[:, 0:3],
+                processing.convert_6d_rot_to_quat(actions[:, 3:9]),
+                qpos_psm1.copy(),
+                actions[:, 9],
+            )
+            actions_psm2 = processing.convert_actions_to_SE3_then_final_actions(
+                actions[:, 10:13],
+                processing.convert_6d_rot_to_quat(actions[:, 13:19]),
+                qpos_psm2.copy(),
+                actions[:, 19],
+            )
+        else:
+            raise NotImplementedError(f"Unsupported action mode: {self.action_mode}")
+
+        return np.column_stack((actions_psm1, actions_psm2)).astype(np.float32)
+
+    def postprocess_actions(
+        self,
+        policy_actions: torch.Tensor,
+        current_pose: torch.Tensor,
+    ) -> torch.Tensor:
+        squeeze_batch = False
+        if policy_actions.dim() == 2:
+            policy_actions = policy_actions.unsqueeze(0)
+            squeeze_batch = True
+        if current_pose.dim() == 1:
+            current_pose = current_pose.unsqueeze(0)
+
+        denormalized_actions = self.denormalize_actions(policy_actions)
+        denormalized_actions_np = denormalized_actions.detach().cpu().numpy()
+        current_pose_np = current_pose.detach().cpu().numpy()
+
+        absolute_actions_np = np.stack(
+            [
+                self._convert_single_policy_actions_to_absolute(pose, action)
+                for pose, action in zip(current_pose_np, denormalized_actions_np)
+            ],
+            axis=0,
+        )
+        absolute_actions = torch.from_numpy(absolute_actions_np).to(
+            device=policy_actions.device, dtype=policy_actions.dtype
+        )
+        if squeeze_batch:
+            absolute_actions = absolute_actions.squeeze(0)
+        return absolute_actions
+
+    def forward(
+        self,
+        image,
+        current_pose,
+        actions=None,
+        is_pad=None,
+        command_text=None,
+        return_policy_actions: bool = False,
+    ):
+        env_state = None
+        image = self.image_normalize(image)
+        batch_size = image.shape[0]
+        model_qpos = torch.zeros(
+            (batch_size, self.state_dim), dtype=image.dtype, device=image.device
+        )
+        command_embedding = self._encode_command_text(command_text, image.device)
+
         if actions is not None:  # training time
-            actions = actions[:, : self.num_queries]
+            processed_actions = self.prepare_actions_for_training(
+                current_pose, actions, is_pad, image.device
+            )
+            processed_actions = processed_actions[:, : self.num_queries]
             is_pad = is_pad[:, : self.num_queries]
 
             a_hat, is_pad_hat, (mu, logvar) = self.model(
-                qpos,
+                model_qpos,
                 image,
                 env_state,
-                actions,
+                processed_actions,
                 is_pad,
                 command_embedding=command_embedding,
             )
             total_kld, dim_wise_kld, mean_kld = kl_divergence(mu, logvar)
             loss_dict = dict()
-            all_l1 = F.l1_loss(actions, a_hat, reduction="none")
+            all_l1 = F.l1_loss(processed_actions, a_hat, reduction="none")
             l1 = (all_l1 * ~is_pad.unsqueeze(-1)).mean()
             loss_dict["l1"] = l1
             loss_dict["kl"] = total_kld[0]
@@ -219,15 +503,40 @@ class ACTPolicy(nn.Module):
             return loss_dict
         else:  # inference time
             a_hat, _, (_, _) = self.model(
-                qpos, image, env_state, command_embedding=command_embedding
+                model_qpos, image, env_state, command_embedding=command_embedding
             )  # no action, sample from prior
-            return a_hat
+            if return_policy_actions:
+                return a_hat
+            return self.postprocess_actions(a_hat, current_pose)
 
     def configure_optimizers(self):
         return self.optimizer
 
     def serialize(self):
-        return self.state_dict()
+        return {
+            "state_dict": self.state_dict(),
+            "policy_config": {
+                "action_mode": self.action_mode,
+                "norm_scheme": self.norm_scheme,
+                "use_language": self.use_language,
+                "language_encoder": self.language_encoder,
+            },
+            "stats_metadata": {
+                "dataset_dir": self.stats_dataset_dir,
+                "tissue_sample_ids_train": list(self.stats_tissue_sample_ids_train or []),
+            },
+        }
 
     def deserialize(self, model_dict):
-        return self.load_state_dict(model_dict)
+        state_dict = model_dict
+        if isinstance(model_dict, dict) and "state_dict" in model_dict:
+            state_dict = model_dict["state_dict"]
+            stats_metadata = model_dict.get("stats_metadata", {})
+            self.stats_dataset_dir = stats_metadata.get("dataset_dir")
+            self.stats_tissue_sample_ids_train = stats_metadata.get(
+                "tissue_sample_ids_train"
+            )
+        load_result = self.load_state_dict(state_dict, strict=False)
+        if "stats_mean" in state_dict:
+            self.has_dataset_stats.fill_(True)
+        return load_result

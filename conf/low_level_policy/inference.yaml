@@ -8,7 +8,7 @@ device: cuda
 batch_size: 1        # Inference is usually run one episode chunk at a time.
 num_workers: 0       # Keep at 0 for simple debugging unless dataset loading is heavy.
 checkpoint_path: ??? # Required path to a saved checkpoint.
-stats_path: null     # If null, inference looks for dataset_stats.pkl next to the checkpoint.
+stats_path: null     # Optional fallback for older checkpoints that do not carry policy-side stats metadata.
 split: val           # train OR val
 num_batches: 1       # Limit evaluation for quick smoke tests.
 output_path: null    # Optional path to save raw predictions / targets with torch.save.

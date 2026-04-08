@@ -12,9 +12,8 @@ from scipy.spatial.transform import Rotation as R
 from sklearn.preprocessing import normalize
 import torch
 
-from src.srth_new.general.utils import processing
+from srth_new.general.utils import processing
 from srth_new.low_level_policy.models.act_model import ACTPolicy
-from src.srth_new.general.utils.lang_encoding import initialize_model_and_tokenizer, encode_text
 
 # From ros packages
 import crtk
@@ -33,30 +32,25 @@ class LowLevelPolicy:
     def __init__(
             self,
             policy: ACTPolicy,
-            dataset_stats: processing.DatasetStats,
+            dataset_stats: processing.DatasetStats | None = None,
         ):
         self.policy = policy
-        self.dataset_stats = dataset_stats
+        if dataset_stats is not None and not bool(self.policy.has_dataset_stats.item()):
+            self.policy.set_dataset_stats(dataset_stats)
         
         self.initialize_hardcoded_parameters()
         self.initialize_ros()
-        # TODO: The below distilbert is hardcoded, but should be loaded from the
-
-        self.tokenizer, self.language_model = initialize_model_and_tokenizer("distilbert")
 
         # TODO: This is hardcoded for now. Later, this should be predicted by the
         # high level policy
         self.command = "1_grasp"
         
     def initialize_hardcoded_parameters(self):
-
-        self.action_mode = "hybrid_relative" # TODO: This is hardcoded but should be a policy member variable
-
         self.num_inferences = 4000
-        self.action_execution_horizon = 30
+        self.chunk_size = self.policy.num_queries
+        self.action_execution_horizon = min(30, self.chunk_size)
         
         self.sleep_rate = 0.18
-        self.language_encoder = "distilbert"
         self.max_timesteps = 400 
         self.state_dim = 16
         self.iter = 0
@@ -200,27 +194,6 @@ class LowLevelPolicy:
                     if rospy.is_shutdown():
                         print("ROS shutdown signal received. Exiting...")
                         break
-        
-                    command_embedding = torch.tensor(encode_text(
-                        self.command, self.language_encoder, self.tokenizer, self.language_model
-                    )).cuda()
-                    
-                    # TODO: Currently, the qpos is just sent in as a zero, may want
-                    # to send the actual qpos
-                    qpos_zero = torch.zeros(1, 20).float().cuda()
-                    
-                    # use this if testing with real endoscope image
-                    curr_image = self.get_image_dvrk()
-
-                    action = self.policy(qpos_zero, curr_image, command_embedding=command_embedding).cpu().numpy().squeeze()
-                    # TODO: The norm scheme is hardcoded but should be a policy member variable
-                    
-                    if self.policy.norm_scheme == "std":
-                        action = processing.unnormalize_positions_only_std(
-                            action, self.dataset_stats.mean, self.dataset_stats.std
-                        )
-                    else:
-                        raise NotImplementedError()
 
                     qpos_psm1 = np.array((self.rt.psm1_pose.position.x, self.rt.psm1_pose.position.y, self.rt.psm1_pose.position.z,
                                         self.rt.psm1_pose.orientation.x, self.rt.psm1_pose.orientation.y, self.rt.psm1_pose.orientation.z, self.rt.psm1_pose.orientation.w,
@@ -230,41 +203,18 @@ class LowLevelPolicy:
                                         self.rt.psm2_pose.orientation.x, self.rt.psm2_pose.orientation.y, self.rt.psm2_pose.orientation.z, self.rt.psm2_pose.orientation.w,
                                         self.rt.psm2_jaw))
 
-                    if self.action_mode == 'hybrid_relative':
-
-                        actions_psm1 = np.zeros((self.chunk_size, 8)) # pos, quat, jaw
-                        actions_psm1[:, 0:3] = qpos_psm1[0:3] + action[:, 0:3] # convert to current translation
-                        actions_psm1 = processing.convert_delta_6d_to_taskspace_quat(action[:, 0:10], actions_psm1, qpos_psm1)
-                        actions_psm1[:, 7] = np.clip(action[:, 9], -0.698, 0.698)  # copy over gripper angles
-                        
-                        actions_psm2 = np.zeros((self.chunk_size, 8)) # pos, quat, jaw
-                        actions_psm2[:, 0:3] = qpos_psm2[0:3] + action[:, 10:13] # convert to current translation
-                        actions_psm2 = processing.convert_delta_6d_to_taskspace_quat(action[:, 10:], actions_psm2, qpos_psm2)
-                        actions_psm2[:, 7] = np.clip(action[:, 19], -0.698, 0.698)  # copy over gripper angles  
-
-                    if self.action_mode == 'relative_endoscope':
-                        actions_psm1 = np.zeros((self.chunk_size, 8)) # pos, quat, jaw
-                        actions_psm1[:, 0:3] = qpos_psm1[0:3] + action[:, 0:3] # convert to current translation
-                        actions_psm1 = processing.convert_delta_6d_to_taskspace_quat_relative_endo(action[:, 0:10], actions_psm1, qpos_psm1)
-                        actions_psm1[:, 7] = np.clip(action[:, 9], -0.698, 0.698)  # copy over gripper angles
-                        
-                        actions_psm2 = np.zeros((self.chunk_size, 8)) # pos, quat, jaw
-                        actions_psm2[:, 0:3] = qpos_psm2[0:3] + action[:, 10:13] # convert to current translation
-                        actions_psm2 = processing.convert_delta_6d_to_taskspace_quat_relative_endo(action[:, 10:], actions_psm2, qpos_psm2)
-                        actions_psm2[:, 7] = np.clip(action[:, 19], -0.698, 0.698)  # copy over gripper angles  
-                        
-                    if self.action_mode == 'ego':
-                        # compute actions for PSM1
-                        actions_psm1 = np.zeros((self.chunk_size, 8)) # pos (3), quat (4), jaw (1) 
-                        dts_psm1 = action[:, 0:3]
-                        dquats_psm1 = self.convert_6d_rot_to_quat(action[:, 3:9]) # [n x 4] xyzw convention
-                        actions_psm1 = self.convert_actions_to_SE3_then_final_actions(dts_psm1, dquats_psm1, qpos_psm1, action[:, 9]) # translation and quaternion
-                        
-                        # compute actions for PSM2
-                        actions_psm2 = np.zeros((self.chunk_size, 8)) # pos (3), quat (4), jaw (1) 
-                        dts_psm2 = action[:, 10:13]
-                        dquats_psm2 = self.convert_6d_rot_to_quat(action[:, 13:19]) # [n x 4] xyzw convention
-                        actions_psm2 = self.convert_actions_to_SE3_then_final_actions(dts_psm2, dquats_psm2, qpos_psm2, action[:, 19]) # translation and quaternion   
+                    curr_image = self.get_image_dvrk()
+                    current_pose = torch.from_numpy(
+                        np.concatenate((qpos_psm1, qpos_psm2)).astype(np.float32)
+                    ).unsqueeze(0)
+                    action = (
+                        self.policy(curr_image, current_pose, command_text=self.command)
+                        .cpu()
+                        .numpy()
+                        .squeeze(0)
+                    )
+                    actions_psm1 = action[:, :8]
+                    actions_psm2 = action[:, 8:16]
                     
                     self.execute_actions(actions_psm1, actions_psm2)
                     t += 1
