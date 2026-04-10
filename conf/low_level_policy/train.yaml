@@ -1,5 +1,5 @@
 defaults:
-  - dataloader: example                 # Sample dataloader settings for low-level training.
+  - dataloader: test_full_actions_scoring                 # Sample dataloader settings for low-level training.
   - policy: act                        # ACT policy architecture and optimizer defaults.
   - override hydra/job_logging: custom # Write logs both to stdout and to the Hydra run dir.
   - _self_
@@ -14,11 +14,12 @@ train:
   keep_every: 1000          # Prune checkpoints so only one representative checkpoint survives per bin.
   validate_every: 5         # Run the validation loop every N training steps.
   checkpoint_dir: ${hydra:runtime.output_dir}/checkpoints
+  resume_checkpoint: null   # Optional checkpoint path to resume model/optimizer/scheduler state from.
 
 wandb:
   project: surpass_debugging              # W&B project name.
   entity: gbyrd3-johns-hopkins-university # W&B team / user namespace.
-  name: ll_policy_debug                   # Human-readable run name.
+  name: ll_policy_test_full_actions_scoring       # Human-readable run name.
 
   # resume settings
   resume: false        # Set true to restore config state from a previous W&B run.

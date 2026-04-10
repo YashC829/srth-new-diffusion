@@ -5,7 +5,7 @@ from pathlib import Path
 import os
 import hydra
 import torch
-from hydra.utils import instantiate
+from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig
 from torch.optim.lr_scheduler import LambdaLR
 import wandb
@@ -14,6 +14,43 @@ from srth_new.low_level_policy import utils
 
 import logging
 log = logging.getLogger(__name__)
+
+
+def resume_training_state(
+    train_cfg: DictConfig,
+    policy,
+    scheduler: LambdaLR,
+    device: torch.device,
+) -> int:
+    resume_checkpoint = train_cfg.resume_checkpoint
+    if not resume_checkpoint:
+        return 0
+
+    checkpoint_path = Path(to_absolute_path(str(resume_checkpoint)))
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Resume checkpoint not found: {checkpoint_path}")
+
+    checkpoint, _ = policy.load_checkpoint(
+        checkpoint_path,
+        map_location=device,
+        load_optimizer=True,
+    )
+
+    if "scheduler_state_dict" in checkpoint:
+        scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+
+    start_step = int(checkpoint.get("step", -1)) + 1
+    log.info("Resumed training state from %s at step %s", checkpoint_path, start_step)
+
+    if start_step >= train_cfg.num_train_steps:
+        log.info(
+            "Resume checkpoint is already at or beyond num_train_steps (%s >= %s); exiting.",
+            start_step,
+            train_cfg.num_train_steps,
+        )
+        exit()
+
+    return start_step
 
 
 def run_policy_step(
@@ -70,7 +107,6 @@ def run_policy_step(
         ckpt_path = Path(train_cfg.checkpoint_dir).joinpath(f"train_step_{step}.ckpt")
         torch.save(
             {
-                "model_state_dict": policy.state_dict(),
                 "policy_state": policy.serialize(),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "scheduler_state_dict": scheduler.state_dict(),
@@ -79,29 +115,40 @@ def run_policy_step(
             ckpt_path
         )
 
+
+def validate(cfg: DictConfig):
+    if cfg.wandb.resume and not cfg.train.resume_checkpoint:
+        raise Exception(
+            "wandb.resume=true but train.resume_checkpoint is unset. incompatible behavior"
+        )
+
+
 @hydra.main(version_base=None, config_path="../../../conf/low_level_policy", config_name="train")
 def main(cfg: DictConfig) -> None:
-    utils.set_seed(1)
+    validate(cfg)
     cfg = utils.wandb_setup(cfg)
+    utils.set_seed(int(cfg.seed))
+    device = utils.resolve_device(str(cfg.device))
     train_loader, val_loader, dataset_stats = utils.load_dataloaders(cfg.dataloader)
-    policy = instantiate(cfg.policy)
+    policy = instantiate(cfg.policy).to(device)
     policy.set_dataset_stats(dataset_stats)
     optimizer = policy.configure_optimizers()
     scheduler = utils.get_cosine_schedule_with_warmup(
-        optimizer, 
+        optimizer,
         num_warmup_steps=cfg.train.num_warmup_steps, 
         num_training_steps=cfg.train.num_train_steps
     )
+    start_step = resume_training_state(cfg.train, policy, scheduler, device)
 
-    for step in range(cfg.train.num_train_steps):
+    for step in range(start_step, cfg.train.num_train_steps):
         run_policy_step(
             cfg.train, policy, train_loader, 
-            torch.device(cfg.device), step, optimizer, scheduler
+            device, step, optimizer, scheduler
         )
         if step % cfg.train.validate_every == 0:
             run_policy_step(
                 cfg.train, policy, val_loader,
-                torch.device(cfg.device), step, optimizer, scheduler, run_val=True
+                device, step, optimizer, scheduler, run_val=True
             )
 
 

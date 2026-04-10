@@ -4,6 +4,7 @@ outputs
 
 # caches
 .dataset_stats_cache
+.hydra_restored
 
 .vscode
 

@@ -181,7 +181,36 @@ def build_act_model(config: dict[str, object]) -> DETRVAE:
     )
 
 class ACTPolicy(nn.Module):
+    """ACT policy wrapper used by the low-level training and inference code.
+
+    This class layers project-specific behavior around the DETR/ACT backbone:
+
+    - builds the ACT model and optimizer from the DETR configuration
+    - caches and applies dataset statistics used to normalize action targets
+    - converts between absolute robot actions and the relative policy action
+      representation expected by the network
+    - optionally encodes language commands for conditioned policies
+    - serializes both learned weights and lightweight metadata needed to resume
+      training or run inference later
+
+    A subtle but important detail is that the internal ACT model currently
+    receives a zero-valued proprioceptive input (`model_qpos`) during the
+    forward pass. The externally supplied `current_pose` is still required,
+    because it is used to transform dataset actions into the policy's relative
+    action space during training and to convert predicted policy actions back
+    into absolute robot commands during inference.
+    """
+
     def __init__(self, args_override):
+        """Initialize the policy, optimizer, and optional language encoder.
+
+        Args:
+            args_override: Mapping of ACT / DETR configuration values. The
+                contents are forwarded to `build_ACT_model_and_optimizer`, then
+                a few policy-specific keys such as `kl_weight`,
+                `action_mode`, `norm_scheme`, and language settings are read
+                directly from the same mapping.
+        """
         super().__init__()
         model, optimizer = build_ACT_model_and_optimizer(args_override)
         self.model = model  # CVAE decoder
@@ -213,12 +242,19 @@ class ACTPolicy(nn.Module):
         self.stats_dataset_dir = None
         self.stats_tissue_sample_ids_train = None
         log.info(f"KL Weight {self.kl_weight}")
-        multi_gpu = args_override["multi_gpu"]
-        self.num_queries = (
-            self.model.module.num_queries if multi_gpu else self.model.num_queries
-        )
+        self.num_queries = self.model.num_queries
 
     def set_dataset_stats(self, dataset_stats: processing.DatasetStats) -> None:
+        """Attach dataset statistics used for action normalization.
+
+        The stored statistics are saved as buffers so they travel with the
+        module state dict and are restored automatically from checkpoints.
+
+        Args:
+            dataset_stats: Precomputed action statistics for the training split.
+                The policy expects mean/std/min/max arrays shaped like the
+                action vector.
+        """
         self.stats_mean.copy_(torch.as_tensor(dataset_stats.mean, dtype=torch.float32))
         self.stats_std.copy_(torch.as_tensor(dataset_stats.std, dtype=torch.float32))
         self.stats_min.copy_(torch.as_tensor(dataset_stats.min, dtype=torch.float32))
@@ -228,6 +264,16 @@ class ACTPolicy(nn.Module):
         self.stats_tissue_sample_ids_train = list(dataset_stats.tissue_sample_ids_train)
 
     def export_dataset_stats(self) -> processing.DatasetStats:
+        """Return the currently attached dataset statistics as a dataclass.
+
+        Returns:
+            A `DatasetStats` object containing normalization arrays and the
+            dataset metadata associated with them.
+
+        Raises:
+            RuntimeError: If statistics have not yet been attached to the
+                policy.
+        """
         if not bool(self.has_dataset_stats.item()):
             raise RuntimeError("Dataset statistics have not been set on the policy.")
 
@@ -241,6 +287,20 @@ class ACTPolicy(nn.Module):
         )
 
     def _encode_command_text(self, command_text, device: torch.device):
+        """Encode one or more command strings for language-conditioned ACT.
+
+        Encoded text embeddings are cached by string value to avoid repeated
+        encoder calls during training when the same command appears many times.
+
+        Args:
+            command_text: A single string or a batch of strings. Must be
+                provided when `use_language=True`.
+            device: Device where the returned embedding tensor should live.
+
+        Returns:
+            A tensor of shape `(batch, embedding_dim)` or `None` when language
+            conditioning is disabled.
+        """
         if not self.use_language:
             return None
         if command_text is None:
@@ -281,6 +341,18 @@ class ACTPolicy(nn.Module):
         return normalized
 
     def normalize_actions(self, actions: torch.Tensor) -> torch.Tensor:
+        """Normalize policy-space actions with the configured statistics scheme.
+
+        Positional and gripper dimensions are normalized, while the 6D rotation
+        blocks are copied back from the raw tensor unchanged. This matches the
+        representation expected by the current action-conversion pipeline.
+
+        Args:
+            actions: Tensor of policy-space actions.
+
+        Returns:
+            The normalized action tensor.
+        """
         self._require_dataset_stats()
         stats_mean = self.stats_mean.to(device=actions.device, dtype=actions.dtype)
         stats_std = self.stats_std.to(device=actions.device, dtype=actions.dtype)
@@ -297,6 +369,14 @@ class ACTPolicy(nn.Module):
         return self._preserve_rotation_columns(normalized, actions)
 
     def denormalize_actions(self, actions: torch.Tensor) -> torch.Tensor:
+        """Invert `normalize_actions` using the stored dataset statistics.
+
+        Args:
+            actions: Normalized policy-space action tensor.
+
+        Returns:
+            The denormalized action tensor in the policy action space.
+        """
         self._require_dataset_stats()
         stats_mean = self.stats_mean.to(device=actions.device, dtype=actions.dtype)
         stats_std = self.stats_std.to(device=actions.device, dtype=actions.dtype)
@@ -343,6 +423,26 @@ class ACTPolicy(nn.Module):
         is_pad: torch.Tensor,
         device: torch.device,
     ) -> torch.Tensor:
+        """Convert absolute dataset actions into normalized policy targets.
+
+        The dataset stores per-timestep absolute robot actions. ACT is trained
+        on a relative policy representation, so each valid action in the chunk
+        is converted relative to the provided `current_pose`, normalized using
+        dataset statistics, and padded positions are zeroed out.
+
+        Args:
+            current_pose: Tensor shaped `(B, 16)` or `(16,)` describing the
+                current left and right arm poses as
+                `[xyz, quat_xyzw, jaw] * 2`.
+            actions: Absolute future action sequence shaped `(B, T, 16)` or
+                `(T, 16)`.
+            is_pad: Padding mask for `actions`, where padded steps are `True`.
+            device: Device for the returned tensor.
+
+        Returns:
+            A normalized policy-action tensor shaped like `actions`, but in the
+            policy action space.
+        """
         if current_pose.dim() == 1:
             current_pose = current_pose.unsqueeze(0)
         if actions.dim() == 2:
@@ -436,6 +536,17 @@ class ACTPolicy(nn.Module):
         policy_actions: torch.Tensor,
         current_pose: torch.Tensor,
     ) -> torch.Tensor:
+        """Convert predicted policy actions back into absolute robot commands.
+
+        Args:
+            policy_actions: Predicted action sequence in normalized policy
+                space. May be batched or unbatched.
+            current_pose: Current robot pose used as the reference frame for
+                reconstructing absolute commands.
+
+        Returns:
+            Absolute robot actions in the dataset/runtime command format.
+        """
         squeeze_batch = False
         if policy_actions.dim() == 2:
             policy_actions = policy_actions.unsqueeze(0)
@@ -470,9 +581,37 @@ class ACTPolicy(nn.Module):
         command_text=None,
         return_policy_actions: bool = False,
     ):
+        """Run the policy in training or inference mode.
+
+        Training mode is selected by passing `actions`. In that case the method
+        converts absolute actions into the policy representation, runs the ACT
+        model, and returns a loss dictionary containing L1, KL, and total loss.
+
+        In inference mode, the method samples from the ACT prior, predicts a
+        sequence of policy actions, and either returns those raw policy-space
+        predictions or converts them into absolute robot commands.
+
+        Args:
+            image: Image batch shaped `(B, num_cameras, C, H, W)` in `[0, 1]`.
+            current_pose: Current robot pose used for action conversion.
+            actions: Optional absolute action targets. Supplying this switches
+                the method into training mode.
+            is_pad: Optional padding mask aligned with `actions`.
+            command_text: Optional command string or batch of strings for
+                language-conditioned policies.
+            return_policy_actions: In inference mode, return the raw policy
+                action tensor instead of absolute robot actions.
+
+        Returns:
+            In training mode, a dictionary of loss tensors. In inference mode,
+            either a tensor of predicted policy actions or a tensor of absolute
+            robot actions.
+        """
         env_state = None
         image = self.image_normalize(image)
         batch_size = image.shape[0]
+        # since the dVRK is so inaccurate in an absolute setting, we set the absolute
+        # qpos to zero so that this will not have an impact on the model
         model_qpos = torch.zeros(
             (batch_size, self.state_dim), dtype=image.dtype, device=image.device
         )
@@ -510,9 +649,16 @@ class ACTPolicy(nn.Module):
             return self.postprocess_actions(a_hat, current_pose)
 
     def configure_optimizers(self):
+        """Return the optimizer constructed alongside the ACT model."""
         return self.optimizer
 
     def serialize(self):
+        """Serialize policy state and lightweight metadata for checkpoints.
+
+        Returns:
+            A dictionary containing the full module state dict plus a small
+            amount of metadata that is useful when restoring the policy later.
+        """
         return {
             "state_dict": self.state_dict(),
             "policy_config": {
@@ -528,6 +674,15 @@ class ACTPolicy(nn.Module):
         }
 
     def deserialize(self, model_dict):
+        """Load policy weights from a serialized policy payload or state dict.
+
+        Args:
+            model_dict: Either the dictionary returned by `serialize()` or a
+                raw PyTorch state dict.
+
+        Returns:
+            The result object returned by `load_state_dict`.
+        """
         state_dict = model_dict
         if isinstance(model_dict, dict) and "state_dict" in model_dict:
             state_dict = model_dict["state_dict"]
@@ -540,3 +695,43 @@ class ACTPolicy(nn.Module):
         if "stats_mean" in state_dict:
             self.has_dataset_stats.fill_(True)
         return load_result
+
+    def load_checkpoint(
+        self,
+        checkpoint_path,
+        map_location: str | torch.device | None = None,
+        load_optimizer: bool = False,
+    ):
+        """Load a training checkpoint from disk.
+
+        This helper understands both the low-level training checkpoint format
+        used in this repository and plain state-dict checkpoints.
+
+        Args:
+            checkpoint_path: Path to the checkpoint file.
+            map_location: Optional `torch.load` map location.
+            load_optimizer: Whether to also restore the optimizer state when it
+                is present in the checkpoint.
+
+        Returns:
+            A tuple of `(checkpoint, load_result)` where `checkpoint` is the
+            full deserialized checkpoint payload and `load_result` is the
+            result from `load_state_dict`.
+        """
+        checkpoint = torch.load(checkpoint_path, map_location=map_location)
+
+        if isinstance(checkpoint, dict) and "policy_state" in checkpoint:
+            load_result = self.deserialize(checkpoint["policy_state"])
+        elif isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+            load_result = self.deserialize(checkpoint["model_state_dict"])
+        else:
+            load_result = self.deserialize(checkpoint)
+
+        if (
+            load_optimizer
+            and isinstance(checkpoint, dict)
+            and "optimizer_state_dict" in checkpoint
+        ):
+            self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
+        return checkpoint, load_result

@@ -24,9 +24,10 @@ def encode_text(text, encoder, tokenizer, model):
             text, return_tensors="pt", truncation=True, padding=True, max_length=512
         )
         with torch.no_grad():
+            inputs = {k: v.to(model.device) for k, v in inputs.items()}
             outputs = model(**inputs)
         # Use the representation of the [CLS] token
-        return outputs.last_hidden_state[:, 0, :].numpy().tolist()
+        return outputs.last_hidden_state[:, 0, :].cpu().numpy().tolist()
     elif encoder == "clip":
         inputs = tokenizer(
             text, return_tensors="pt", truncation=True, padding=True, max_length=77

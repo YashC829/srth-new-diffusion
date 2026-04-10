@@ -170,16 +170,27 @@ def restore_hydra_state_from_wandb(
     return restored
 
 def get_hydra_file_paths():
-    hydra_run_dir = Path(HydraConfig.get().runtime.output_dir)
+    hydra_dir = Path(HydraConfig.get().runtime.output_dir) / ".hydra"
 
     return [
-        hydra_run_dir / ".hydra/config.yaml",
-        hydra_run_dir / ".hydra/hydra.yaml",
-        hydra_run_dir / ".hydra/overrides.yaml",
+        hydra_dir / "config.yaml",
+        hydra_dir / "hydra.yaml",
+        hydra_dir / "overrides.yaml",
+        hydra_dir / "wandb_run_id.txt",
     ]
+
+
+def save_wandb_run_id(run_id: str) -> Path:
+    hydra_dir = Path(HydraConfig.get().runtime.output_dir) / ".hydra"
+    hydra_dir.mkdir(parents=True, exist_ok=True)
+
+    wandb_run_id_path = hydra_dir / "wandb_run_id.txt"
+    wandb_run_id_path.write_text(f"{run_id}\n", encoding="utf-8")
+    return wandb_run_id_path
 
 def wandb_setup(cfg: DictConfig) -> DictConfig:
     wandb_id = cfg.wandb.id
+    resume_checkpoint = OmegaConf.select(cfg, "train.resume_checkpoint")
 
     # must save this here because if we are resuming, we will
     # load the config from the previously saved hydra config.
@@ -197,6 +208,7 @@ def wandb_setup(cfg: DictConfig) -> DictConfig:
             wandb_id,
         )
         cfg = restored["config"]
+        cfg.train.resume_checkpoint = resume_checkpoint
         resume_mode = "must"
     else:
         wandb_id = wandb_id or wandb.util.generate_id()
@@ -211,6 +223,9 @@ def wandb_setup(cfg: DictConfig) -> DictConfig:
         mode=cfg.wandb.mode,
         config=OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True),
     )
+    cfg.wandb.resume = wandb_resume
+    cfg.wandb.id = getattr(run, "id", wandb_id) or wandb_id
+    save_wandb_run_id(getattr(run, "id", wandb_id) or wandb_id)
 
     # Only save Hydra files for fresh runs
     if not wandb_resume:
@@ -375,13 +390,3 @@ def collect_data(data, device: torch.device):
         is_pad.to(device), 
         list(command_text) if isinstance(command_text, tuple) else command_text
     )
-
-def compute_dict_mean(epoch_dicts):
-    result = {k: None for k in epoch_dicts[0]}
-    num_items = len(epoch_dicts)
-    for k in result:
-        value_sum = 0
-        for epoch_dict in epoch_dicts:
-            value_sum += epoch_dict[k]
-        result[k] = value_sum / num_items
-    return result

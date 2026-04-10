@@ -706,9 +706,11 @@ class EpisodicDatasetDvrkGeneric(torch.utils.data.Dataset):
                 # -------------------------------
 
                 # get current position and actions from the selected camera's CSV
-                qpos_psm1 = selected_csv[self.header_name_actions_psm1].iloc[start_ts, :].to_numpy()
+                # qpos_psm1 = selected_csv[self.header_name_actions_psm1].iloc[start_ts, :].to_numpy() # this is what the original code had
+                qpos_psm1 = selected_csv[self.header_name_qpos_psm1].iloc[start_ts, :].to_numpy() # I think this is correct
                 action_psm1 = selected_csv[self.header_name_actions_psm1].iloc[start_ts:start_ts+400].to_numpy()
-                qpos_psm2 = selected_csv[self.header_name_actions_psm2].iloc[start_ts, :].to_numpy()
+                # qpos_psm2 = selected_csv[self.header_name_qpos_psm2].iloc[start_ts, :].to_numpy() # this is what the original code had
+                qpos_psm2 = selected_csv[self.header_name_qpos_psm2].iloc[start_ts, :].to_numpy() # I think this is correct
                 action_psm2 = selected_csv[self.header_name_actions_psm2].iloc[start_ts:start_ts+400].to_numpy()
 
                 action_len = min(episode_len - start_ts, 400)
