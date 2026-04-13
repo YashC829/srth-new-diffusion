@@ -8,10 +8,10 @@ seed: 1          # Global random seed for NumPy / PyTorch / data shuffling.
 device: cuda     # Falls back to CPU only if the training code is updated to do so explicitly.
 
 train:
-  num_train_steps: 20000
+  num_train_steps: 10000
   num_warmup_steps: 200
   save_every: 50            # Save a checkpoint every N training steps.
-  keep_every: 1000          # Prune checkpoints so only one representative checkpoint survives per bin.
+  keep_every: 500          # Prune checkpoints so only one representative checkpoint survives per bin.
   validate_every: 5         # Run the validation loop every N training steps.
   checkpoint_dir: ${hydra:runtime.output_dir}/checkpoints
   resume_checkpoint: null   # Optional checkpoint path to resume model/optimizer/scheduler state from.
@@ -29,4 +29,4 @@ wandb:
 hydra:
   run:
     # Each run gets its own timestamped directory with logs, configs, and checkpoints.
-    dir: /home/grayson/surpass/srth-new/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: outputs/low_level_policy/train/${now:%Y-%m-%d}/${now:%H-%M-%S}

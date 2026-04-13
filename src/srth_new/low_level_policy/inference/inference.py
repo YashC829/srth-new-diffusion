@@ -18,9 +18,9 @@ from srth_new.low_level_policy.models.act_model import ACTPolicy
 
 # From ros packages
 import crtk
-from dvrk_scripts.dvrk_control import example_application
+from srth_new.low_level_policy.inference.dvrk_control import example_application
 import rospy
-from rostopics import ros_topics
+from srth_new.low_level_policy.inference.rostopics import ros_topics
 from std_msgs.msg import Bool
 
 import logging

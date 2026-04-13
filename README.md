@@ -219,3 +219,10 @@ The current evaluation path is still a scaffold. [`src/srth_new/low_level_policy
 ## High-Level Policy Status
 
 The high-level policy config tree lives under [`conf/high_level_policy/`](conf/high_level_policy), but the corresponding training and inference entrypoints are still scaffolds. Treat those configs as templates rather than a fully wired workflow.
+
+# Environment variables to connect with the dVRK
+
+```bash
+export ROS_MASTER_URI=http://10.162.34.59:11311
+export ROS_IP=10.162.34.58
+```
