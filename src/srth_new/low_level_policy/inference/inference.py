@@ -94,17 +94,21 @@ class LowLevelPolicy:
     def get_image_dvrk(self):
         self.iter += 1
 
-        def decode_ros_img(img_data, img_shape: Tuple[int, int]):
-            img = np.frombuffer(img_data, np.uint8)
-            img = cv2.imdecode(img, cv2.IMREAD_COLOR)
-            img = cv2.resize(img, img_shape)
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            img = rearrange(img, 'h w c -> c h w')
-            return img
-        
-        self.left_img = decode_ros_img(self.rt.usb_image_left.data, img_shape=(480, 360))
-        self.psm2_img = decode_ros_img(self.rt.endo_cam_psm2, img_shape=(480, 360))
-        self.psm1_img = decode_ros_img(self.rt.endo_cam_psm1, img_shape=(480, 360))
+        self.left_img = np.fromstring(self.rt.usb_image_left.data, np.uint8)
+        self.left_img = cv2.imdecode(self.left_img, cv2.IMREAD_COLOR)
+        self.left_img = cv2.resize(self.left_img, (480, 360))
+        self.left_img = cv2.cvtColor(self.left_img, cv2.COLOR_BGR2RGB)
+        self.left_img = rearrange(self.left_img, 'h w c -> c h w')
+
+        self.psm2_img = np.fromstring(self.rt.endo_cam_psm2.data, np.uint8)
+        self.psm2_img = cv2.resize(self.psm2_img, (480, 360))
+        self.psm2_img = cv2.cvtColor(self.psm2_img, cv2.COLOR_BGR2RGB)
+        self.psm2_img = rearrange(self.psm2_img, 'h w c -> c h w')
+
+        self.psm1_img = np.fromstring(self.rt.endo_cam_psm1.data, np.uint8)
+        self.psm1_img = cv2.resize(self.psm1_img, (480, 360))
+        self.psm1_img = cv2.cvtColor(self.psm1_img, cv2.COLOR_BGR2RGB)
+        self.psm1_img = rearrange(self.psm1_img, 'h w c -> c h w')
 
         curr_image = np.stack([self.left_img, self.psm2_img, self.psm1_img], axis=0)
         curr_image = torch.from_numpy(curr_image / 255.0).float().cuda().unsqueeze(0)
@@ -185,7 +189,7 @@ class LowLevelPolicy:
             if stop_event.is_set() or self._shutdown_event.is_set() or rospy.is_shutdown():
                 return
 
-            self.ral.spin_and_execute(self.psm1_app.run_full_pose_goal, actions_psm1[jj])
+            # self.ral.spin_and_execute(self.psm1_app.run_full_pose_goal, actions_psm1[jj])
             self.ral.spin_and_execute(self.psm2_app.run_full_pose_goal, actions_psm2[jj])
             sleep_deadline = time.monotonic() + self.sleep_rate
             while not stop_event.is_set() and not self._shutdown_event.is_set():
@@ -222,6 +226,12 @@ class LowLevelPolicy:
             "Low-level policy prediction frequency set to %.3f Hz",
             self.prediction_frequency_hz,
         )
+        missing_topics = self.rt.get_missing_topics()
+        if missing_topics:
+            rospy.logerr(
+                "\033[91mLowLevelPolicy.run() called before first message was received on: %s\033[0m",
+                ", ".join(missing_topics),
+            )
         time.sleep(1)
         with torch.inference_mode():
             try:

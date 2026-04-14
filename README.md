@@ -1,23 +1,30 @@
 # srth-new
 
-`srth-new` is a Hydra-based scaffold for surgical robot policy learning. The repository is currently most complete for low-level ACT training. High-level policy code and some inference workflows are still under active development.
+`srth-new` is a Hydra-based scaffold for surgical robot policy learning.
+The most complete workflow in this repository is low-level ACT training.
+ROS/dVRK inference support exists, but it is still fairly project-specific.
+The high-level policy tree is present, but it should still be treated as an active scaffold rather than a polished workflow.
 
-## Repository Layout
+## Current Status
 
-- [`src/srth_new/low_level_policy/`](src/srth_new/low_level_policy): low-level training code, datasets, ACT model, and runtime inference utilities
-- [`src/srth_new/high_level_policy/`](src/srth_new/high_level_policy): early high-level-policy scaffold and dataset code
-- [`conf/low_level_policy/`](conf/low_level_policy): Hydra configs for low-level training and evaluation
-- [`conf/high_level_policy/`](conf/high_level_policy): Hydra configs for high-level experiments
-- [`catkin_ws/`](catkin_ws): catkin workspace for ROS/dVRK dependencies used by runtime inference
-- `outputs/`: Hydra logs, resolved configs, and checkpoints written during runs
+- Low-level ACT training is the main supported path.
+- Hydra configs for training and inference live under [`conf/low_level_policy/`](conf/low_level_policy).
+- ROS/dVRK runtime code lives under [`src/srth_new/low_level_policy/inference/`](src/srth_new/low_level_policy/inference).
+- The ROS workspace in [`catkin_ws/`](catkin_ws) now vendors its CRTK/dVRK dependencies directly in this repo instead of using git submodules.
 
-## Setup
+## Repository Map
 
-For training-only workflows, the provided Conda environment is usually enough. For ROS/dVRK inference, you will also need the catkin workspace build described below.
+- [`src/srth_new/low_level_policy/`](src/srth_new/low_level_policy): low-level datasets, ACT model code, training loop, and inference utilities
+- [`conf/low_level_policy/`](conf/low_level_policy): Hydra configs for low-level training and inference
+- [`src/srth_new/high_level_policy/`](src/srth_new/high_level_policy): early high-level policy scaffold
+- [`conf/high_level_policy/`](conf/high_level_policy): high-level experiment configs and templates
+- [`catkin_ws/`](catkin_ws): catkin workspace for ROS/dVRK dependencies used during runtime inference
+- [`saved_runs/`](saved_runs): experiment notes and archived run metadata
+- `outputs/`: Hydra run directories with resolved configs, logs, and checkpoints
 
-### Option 1: Use the provided Conda environment
+## Quick Start
 
-The quickest setup path is [`environment.yml`](environment.yml). Note that the file currently names the environment `srth-new_`.
+If you only want to train policies, the shortest path is:
 
 ```bash
 conda env create -f environment.yml
@@ -25,15 +32,45 @@ conda activate srth-new_
 python -m pip install -e .
 ```
 
-If you also want the pinned Python dependencies from [`requirements.txt`](requirements.txt):
+If you also want the pinned Python packages from [`requirements.txt`](requirements.txt):
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-### Option 2: Create the environment from scratch with mamba
+If you plan to use ROS/dVRK runtime inference, also build the catkin workspace:
 
-If `conda env create` is too slow, install `mamba` first and use it for the rest of the setup:
+```bash
+cd catkin_ws
+catkin build --cmake-args -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+source devel/setup.bash
+cd ..
+```
+
+You will need to source `catkin_ws/devel/setup.bash` again in each new shell before running ROS-based code.
+
+## Environment Setup
+
+### Option 1: Provided Conda Environment
+
+[`environment.yml`](environment.yml) is the simplest setup path.
+Note that it currently names the environment `srth-new_`.
+
+```bash
+conda env create -f environment.yml
+conda activate srth-new_
+python -m pip install -e .
+```
+
+Optional:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+### Option 2: Manual Environment with Mamba
+
+If `conda env create` is too slow, you can build the environment manually:
 
 ```bash
 conda install -n base -c conda-forge mamba
@@ -85,19 +122,6 @@ python -m pip install -r requirements.txt
 python -m pip install -e .
 ```
 
-### Build the catkin workspace
-
-If you plan to use ROS/dVRK runtime inference, build and source the workspace in [`catkin_ws/`](catkin_ws):
-
-```bash
-cd catkin_ws
-catkin build --cmake-args -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-source devel/setup.bash
-cd ..
-```
-
-Source `catkin_ws/devel/setup.bash` again in each new shell before launching ROS-based inference.
-
 ## Low-Level ACT Training
 
 The main training entrypoint is:
@@ -108,77 +132,114 @@ python -m srth_new.low_level_policy.train
 
 Hydra loads [`conf/low_level_policy/train.yaml`](conf/low_level_policy/train.yaml), which composes:
 
-- a dataloader config from [`conf/low_level_policy/dataloader/`](conf/low_level_policy/dataloader)
-- a policy config from [`conf/low_level_policy/policy/`](conf/low_level_policy/policy)
-- the custom Hydra logging config
+- a dataloader config
+- a policy config
+- a custom Hydra logging config
 
-### Before you run
+### Before Your First Run
 
-1. Update the dataset path in [`conf/low_level_policy/dataloader/example.yaml`](conf/low_level_policy/dataloader/example.yaml):
+1. Pick a real dataloader config.
 
-```yaml
-dataset_dir: /path/to/your/dataset
-```
+   [`conf/low_level_policy/train.yaml`](conf/low_level_policy/train.yaml) currently defaults to:
 
-2. Review the split and dataloader settings in [`conf/low_level_policy/dataloader/example.yaml`](conf/low_level_policy/dataloader/example.yaml):
+   ```yaml
+   defaults:
+     - dataloader: test_full_actions_scoring
+   ```
 
-- `tissue_sample_ids_train` and `tissue_sample_ids_val`
-- `num_episodes_train` and `num_episodes_val`
-- `batch_size`, `num_workers`, and `chunk_size`
+   but the repo currently only includes [`conf/low_level_policy/dataloader/example.yaml`](conf/low_level_policy/dataloader/example.yaml).
+   Either change the default in `train.yaml` or override it on the command line with `dataloader=example`.
 
-3. Update the default output directory in [`conf/low_level_policy/train.yaml`](conf/low_level_policy/train.yaml) if your checkout is not at this exact path:
+2. Update the dataset settings in [`conf/low_level_policy/dataloader/example.yaml`](conf/low_level_policy/dataloader/example.yaml):
 
-```yaml
-hydra:
-  run:
-    dir: /path/to/your/repo/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
-```
+   - `dataset_dir`
+   - `tissue_sample_ids_train`
+   - `tissue_sample_ids_val`
+   - `num_episodes_train`
+   - `num_episodes_val`
+   - `batch_size`
+   - `num_workers`
+   - `chunk_size`
 
-4. Set the Weights & Biases fields in [`conf/low_level_policy/train.yaml`](conf/low_level_policy/train.yaml) before your first run:
+3. Review the W&B settings in [`conf/low_level_policy/train.yaml`](conf/low_level_policy/train.yaml):
 
-```yaml
-wandb:
-  project: your_project_name
-  entity: your_team_or_username
-  name: experiment_name
-  resume: false
-  id: null
-  mode: online
-```
+   - `wandb.project`
+   - `wandb.entity`
+   - `wandb.name`
+   - `wandb.mode`
 
-When `wandb.resume=true`, `wandb.id` is required and the original Hydra config is restored from W&B before training continues.
+4. If needed, change the Hydra output root in [`conf/low_level_policy/train.yaml`](conf/low_level_policy/train.yaml):
 
-### Common commands
+   ```yaml
+   hydra:
+     run:
+       dir: outputs/low_level_policy/train/${now:%Y-%m-%d}/${now:%H-%M-%S}
+   ```
+
+5. If you plan to resume training, set both:
+
+   - `wandb.resume=true`
+   - `train.resume_checkpoint=/path/to/checkpoint.ckpt`
+
+   `wandb.id` is also required when resuming from an existing W&B run.
+
+### Common Commands
+
+Use the included example dataloader:
 
 ```bash
-# Default run
-python -m srth_new.low_level_policy.train
+python -m srth_new.low_level_policy.train dataloader=example
+```
 
-# Override config values
+Override config values:
+
+```bash
 python -m srth_new.low_level_policy.train \
+  dataloader=example \
   dataloader.dataset_dir=/data/chole \
   dataloader.batch_size=4 \
   train.num_train_steps=1000
-
-# Log offline
-python -m srth_new.low_level_policy.train wandb.mode=offline
-
-# Disable W&B
-python -m srth_new.low_level_policy.train wandb.mode=disabled
-
-# Resume an existing run
-python -m srth_new.low_level_policy.train \
-  wandb.resume=true \
-  wandb.id=<existing_run_id>
 ```
 
-### Outputs
+Log offline:
 
-Each training run writes to a timestamped Hydra directory, typically under `outputs/`, containing:
+```bash
+python -m srth_new.low_level_policy.train \
+  dataloader=example \
+  wandb.mode=offline
+```
 
-- `.hydra/`: the resolved Hydra config
-- `main.log`: the training log
-- `checkpoints/`: saved model checkpoints
+Disable W&B:
+
+```bash
+python -m srth_new.low_level_policy.train \
+  dataloader=example \
+  wandb.mode=disabled
+```
+
+Resume a run:
+
+```bash
+python -m srth_new.low_level_policy.train \
+  dataloader=example \
+  wandb.resume=true \
+  wandb.id=<existing_run_id> \
+  train.resume_checkpoint=/path/to/checkpoint.ckpt
+```
+
+### Training Outputs
+
+Each run writes to a timestamped Hydra directory, typically under:
+
+```text
+outputs/low_level_policy/train/<date>/<time>/
+```
+
+That directory contains:
+
+- `.hydra/`: resolved Hydra config
+- `main.log`: training log
+- `checkpoints/`: saved checkpoints
 
 By default, checkpoints are written to:
 
@@ -188,41 +249,60 @@ ${hydra:runtime.output_dir}/checkpoints
 
 ## Inference
 
-### ROS/dVRK runtime inference
+There are currently two inference-oriented paths in this repo.
 
-The live inference implementation lives in [`src/srth_new/low_level_policy/inference/inference.py`](src/srth_new/low_level_policy/inference/inference.py). Before using it:
+### 1. Hydra-Based Runtime Entry Point
+
+The main entrypoint is:
+
+```bash
+python -m srth_new.low_level_policy.run_inference
+```
+
+Its config lives in [`conf/low_level_policy/inference.yaml`](conf/low_level_policy/inference.yaml).
+At a minimum, set:
+
+- `checkpoint_path`
+- `device`
+- `prediction_frequency_hz`
+- `sleep_rate`
+
+Example:
+
+```bash
+python -m srth_new.low_level_policy.run_inference \
+  checkpoint_path=/path/to/train_step_1000.ckpt
+```
+
+The current inference config is intentionally small, so expect some project-specific wiring around ROS topics, robot state, and deployment details.
+
+### 2. ROS/dVRK Live Runtime
+
+The live runtime implementation is centered around [`src/srth_new/low_level_policy/inference/inference.py`](src/srth_new/low_level_policy/inference/inference.py).
+Before using it:
 
 - activate your Conda environment
 - source `catkin_ws/devel/setup.bash`
-- make sure the required ROS/dVRK dependencies and topics are available
-- review the task-specific hardcoded settings in the `LowLevelPolicy` class
+- make sure the required ROS/dVRK services and topics are available
+- review any task-specific settings in the `LowLevelPolicy` runtime code
 
-This path is intended for project-specific robot execution and is not yet a plug-and-play CLI workflow.
-
-### Hydra-based checkpoint evaluation
-
-The evaluation config lives in [`conf/low_level_policy/inference.yaml`](conf/low_level_policy/inference.yaml). At a minimum, set:
-
-- `checkpoint_path`
-- `stats_path` if you need to load dataset stats separately
-- `output_path` if you want to save predictions
-
-The current evaluation path is still a scaffold. [`src/srth_new/low_level_policy/run_inference.py`](src/srth_new/low_level_policy/run_inference.py) and [`conf/low_level_policy/inference.yaml`](conf/low_level_policy/inference.yaml) are good starting points, but expect some project-specific wiring before using them end to end.
-
-## Hydra Quick Reference
-
-- Run with defaults: `python -m srth_new.low_level_policy.train`
-- Override one value: `python -m srth_new.low_level_policy.train train.num_train_steps=500`
-- Swap a config group member: `python -m srth_new.low_level_policy.train dataloader=example`
-- Inspect the resolved config: check `.hydra/config.yaml` inside a run directory
-
-## High-Level Policy Status
-
-The high-level policy config tree lives under [`conf/high_level_policy/`](conf/high_level_policy), but the corresponding training and inference entrypoints are still scaffolds. Treat those configs as templates rather than a fully wired workflow.
-
-# Environment variables to connect with the dVRK
+For dVRK connectivity, the repo currently documents these environment variables:
 
 ```bash
 export ROS_MASTER_URI=http://10.162.34.59:11311
 export ROS_IP=10.162.34.58
 ```
+
+Treat those values as machine-specific examples rather than universal defaults.
+
+## Hydra Quick Reference
+
+- Run with defaults: `python -m srth_new.low_level_policy.train`
+- Override one value: `python -m srth_new.low_level_policy.train train.num_train_steps=500`
+- Use the included dataloader config: `python -m srth_new.low_level_policy.train dataloader=example`
+- Inspect the resolved config: open `.hydra/config.yaml` inside a run directory
+
+## High-Level Policy Status
+
+The high-level policy tree lives under [`src/srth_new/high_level_policy/`](src/srth_new/high_level_policy) and [`conf/high_level_policy/`](conf/high_level_policy), but it is still best understood as a scaffold.
+Use it as a starting point for experiments rather than expecting a complete end-to-end workflow.
