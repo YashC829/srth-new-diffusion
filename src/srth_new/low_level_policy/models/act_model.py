@@ -226,6 +226,7 @@ class ACTPolicy(nn.Module):
             mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
         )
         self._command_embedding_cache = {}
+        self.training_text_conditionings: list[str] = []
         self.tokenizer = None
         self.language_model = None
         if self.use_language:
@@ -306,10 +307,9 @@ class ACTPolicy(nn.Module):
         if command_text is None:
             raise ValueError("command_text is required when use_language=True")
 
-        if isinstance(command_text, str):
-            texts = [command_text]
-        else:
-            texts = list(command_text)
+        texts = self._normalize_command_text(command_text)
+        if not texts:
+            raise ValueError("command_text must contain at least one string")
 
         embeddings = []
         for text in texts:
@@ -327,6 +327,25 @@ class ACTPolicy(nn.Module):
             embeddings.append(self._command_embedding_cache[text])
 
         return torch.stack(embeddings, dim=0).to(device)
+
+    @staticmethod
+    def _normalize_command_text(command_text) -> list[str]:
+        if command_text is None:
+            return []
+        if isinstance(command_text, str):
+            texts = [command_text]
+        else:
+            texts = list(command_text)
+        return [
+            text if isinstance(text, str) else str(text)
+            for text in texts
+            if text is not None
+        ]
+
+    def _record_training_command_text(self, command_text) -> None:
+        self.training_text_conditionings.extend(
+            self._normalize_command_text(command_text)
+        )
 
     def _require_dataset_stats(self) -> None:
         if not bool(self.has_dataset_stats.item()):
@@ -618,6 +637,9 @@ class ACTPolicy(nn.Module):
         command_embedding = self._encode_command_text(command_text, image.device)
 
         if actions is not None:  # training time
+            # we keep track of the various commands to send to the robot and
+            # save these in the model checkpoint
+            self._record_training_command_text(command_text)
             processed_actions = self.prepare_actions_for_training(
                 current_pose, actions, is_pad, image.device
             )
@@ -671,6 +693,7 @@ class ACTPolicy(nn.Module):
                 "dataset_dir": self.stats_dataset_dir,
                 "tissue_sample_ids_train": list(self.stats_tissue_sample_ids_train or []),
             },
+            "training_text_conditionings": list(self.training_text_conditionings),
         }
 
     def deserialize(self, model_dict):
@@ -690,6 +713,9 @@ class ACTPolicy(nn.Module):
             self.stats_dataset_dir = stats_metadata.get("dataset_dir")
             self.stats_tissue_sample_ids_train = stats_metadata.get(
                 "tissue_sample_ids_train"
+            )
+            self.training_text_conditionings = list(
+                model_dict.get("training_text_conditionings", [])
             )
         load_result = self.load_state_dict(state_dict, strict=False)
         if "stats_mean" in state_dict:
