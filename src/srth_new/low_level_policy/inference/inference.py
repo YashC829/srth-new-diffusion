@@ -189,7 +189,7 @@ class LowLevelPolicy:
             if stop_event.is_set() or self._shutdown_event.is_set() or rospy.is_shutdown():
                 return
 
-            # self.ral.spin_and_execute(self.psm1_app.run_full_pose_goal, actions_psm1[jj])
+            self.ral.spin_and_execute(self.psm1_app.run_full_pose_goal, actions_psm1[jj])
             self.ral.spin_and_execute(self.psm2_app.run_full_pose_goal, actions_psm2[jj])
             sleep_deadline = time.monotonic() + self.sleep_rate
             while not stop_event.is_set() and not self._shutdown_event.is_set():
