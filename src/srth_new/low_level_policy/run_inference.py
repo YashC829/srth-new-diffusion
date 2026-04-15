@@ -30,7 +30,9 @@ def main(cfg: DictConfig) -> None:
     low_level_policy = LowLevelPolicy(
         policy=policy,
         prediction_frequency_hz=cfg.prediction_frequency_hz,
-        sleep_rate=cfg.sleep_rate
+        action_execution_hz=cfg.action_execution_hz,
+        enable_gui=cfg.enable_gui,
+        start_paused=cfg.start_paused,
     )
     low_level_policy.run()
 

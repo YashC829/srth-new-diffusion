@@ -265,7 +265,7 @@ At a minimum, set:
 - `checkpoint_path`
 - `device`
 - `prediction_frequency_hz`
-- `sleep_rate`
+- `action_execution_hz`
 
 Example:
 
@@ -275,6 +275,7 @@ python -m srth_new.low_level_policy.run_inference \
 ```
 
 The current inference config is intentionally small, so expect some project-specific wiring around ROS topics, robot state, and deployment details.
+When the GUI is enabled, inference now starts paused by default; override with `start_paused=false` if you want it to begin running immediately.
 
 ### 2. ROS/dVRK Live Runtime
 

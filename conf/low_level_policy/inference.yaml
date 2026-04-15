@@ -6,7 +6,9 @@ defaults:
 device: cuda
 checkpoint_path: ??? # Required path to a saved checkpoint.
 prediction_frequency_hz: 5.0
-sleep_rate: 0.05
+action_execution_hz: 20.0
+enable_gui: true
+start_paused: true
 
 hydra:
   run:
