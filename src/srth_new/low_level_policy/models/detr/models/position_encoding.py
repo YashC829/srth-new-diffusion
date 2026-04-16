@@ -2,6 +2,8 @@
 """
 Various positional encodings for the transformer.
 """
+from typing import Literal
+
 import math
 import torch
 from torch import nn
@@ -98,14 +100,16 @@ class PositionEmbeddingLearned(nn.Module):
         return pos
 
 
-def build_position_encoding(args):
-    N_steps = args.hidden_dim // 2
-    if args.position_embedding in ("v2", "sine"):
-        # TODO find a better way of exposing other arguments
+def build_position_encoding(
+    hidden_dim: int,
+    position_embedding_type: Literal["v2", "sine"]
+):
+    N_steps = hidden_dim // 2
+    if position_embedding_type in ("v2", "sine"):
         position_embedding = PositionEmbeddingSine(N_steps, normalize=True)
-    elif args.position_embedding in ("v3", "learned"):
+    elif position_embedding_type in ("v3", "learned"):
         position_embedding = PositionEmbeddingLearned(N_steps)
     else:
-        raise ValueError(f"not supported {args.position_embedding}")
+        raise ValueError(f"not supported {position_embedding_type}")
 
     return position_embedding

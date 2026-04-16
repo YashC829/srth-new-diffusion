@@ -8,11 +8,13 @@ from torchvision import transforms
 from torch.nn import functional as F
 
 from srth_new.general.utils.lang_encoding import encode_text, initialize_model_and_tokenizer
-from .dvrk_policy import DVRKPolicy
+from srth_new.low_level_policy.models.dvrk_policy import DVRKPolicy
 from srth_new.low_level_policy.models.detr.models.backbone import build_image_backbone
 from srth_new.low_level_policy.models.detr.models.transformer import build_transformer
 from srth_new.low_level_policy.models.detr.models.detr_vae import build_encoder
-from srth_new.low_level_policy.models.detr.models.detr_vae import DETRVAE
+from srth_new.low_level_policy.models.act_with_depth.detr_vae_depth import (
+    DETRVAEDepth,
+)
 
 import logging
 log = logging.getLogger(__name__)
@@ -34,7 +36,7 @@ def kl_divergence(mu, logvar):
     return total_kld, dimension_wise_kld, mean_kld
 
 
-class ACTPolicy(DVRKPolicy):
+class ACTPolicyDepth(DVRKPolicy):
     """ACT policy wrapper used by the low-level training and inference code.
 
     This class layers project-specific behavior around the DETR/ACT backbone:
@@ -96,12 +98,14 @@ class ACTPolicy(DVRKPolicy):
         for _ in range(len(camera_names)):
             img_backbone = build_image_backbone(**img_backbone_cfg) # type:ignore
             img_backbones.append(img_backbone)
+        depth_backbone = build_image_backbone(**img_backbone_cfg) # type:ignore
 
         transformer = build_transformer(transformer_cfg)
         encoder = build_encoder(encoder_cfg)
 
-        self.model = DETRVAE(
+        self.model = DETRVAEDepth(
             img_backbones,
+            depth_backbone,
             transformer,
             encoder,
             state_dim=action_dim,
@@ -210,6 +214,42 @@ class ACTPolicy(DVRKPolicy):
             self._normalize_command_text(command_text)
         )
 
+    def _split_rgb_and_depth(self, image):
+        if isinstance(image, dict):
+            rgb_image = image.get("rgb", image.get("image"))
+            depth_image = image.get("depth")
+        elif isinstance(image, (tuple, list)):
+            if len(image) != 2:
+                raise ValueError(
+                    "Depth policy expects image input as (rgb_image, depth_image)."
+                )
+            rgb_image, depth_image = image
+        elif isinstance(image, torch.Tensor):
+            if image.dim() != 5:
+                raise ValueError(
+                    "Image tensor must have shape (B, num_images, C, H, W)."
+                )
+            if image.shape[1] == len(self.model.camera_names) + 1: # type:ignore
+                rgb_image = image[:, : len(self.model.camera_names)] # type:ignore
+                depth_image = image[:, len(self.model.camera_names)] # type:ignore
+            else:
+                rgb_image = image
+                depth_image = None
+        else:
+            raise TypeError(
+                "Unsupported image input type for depth policy: "
+                f"{type(image).__name__}"
+            )
+
+        if rgb_image is None or depth_image is None:
+            raise ValueError(
+                "Depth policy requires both RGB images and an aligned depth image. "
+                "Pass a dict with keys {'rgb', 'depth'}, a tuple "
+                "(rgb_image, depth_image), or a tensor with the depth image "
+                "appended after the RGB camera images."
+            )
+        return rgb_image, depth_image
+
     def _serialize_policy_config(self) -> dict[str, object]:
         policy_config = super()._serialize_policy_config()
         policy_config.update(
@@ -267,7 +307,9 @@ class ACTPolicy(DVRKPolicy):
             robot actions.
         """
         env_state = None
+        image, depth_image = self._split_rgb_and_depth(image)
         image = self.image_normalize(image)
+        depth_image = self.image_normalize(depth_image)
         batch_size = image.shape[0]
         # since the dVRK is so inaccurate in an absolute setting, we set the absolute
         # qpos to zero so that this will not have an impact on the model
@@ -295,6 +337,7 @@ class ACTPolicy(DVRKPolicy):
                 processed_actions,
                 is_pad,
                 command_embedding=command_embedding,
+                depth_image=depth_image,
             )
             total_kld, dim_wise_kld, mean_kld = kl_divergence(mu, logvar)
             loss_dict = dict()
@@ -306,7 +349,11 @@ class ACTPolicy(DVRKPolicy):
             return loss_dict
         else:  # inference time
             a_hat, _, (_, _) = self.model(
-                model_qpos, image, env_state, command_embedding=command_embedding
+                model_qpos,
+                image,
+                env_state,
+                command_embedding=command_embedding,
+                depth_image=depth_image,
             )  # no action, sample from prior
             if return_policy_actions:
                 return a_hat

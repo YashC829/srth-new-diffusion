@@ -455,7 +455,6 @@ def _get_clones(module, N):
 
 
 def build_transformer(args):
-    print("using ACT")
     return Transformer(
         d_model=args.hidden_dim,
         dropout=args.dropout,

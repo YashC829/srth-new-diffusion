@@ -3,6 +3,7 @@
 Backbone modules.
 """
 from collections import OrderedDict
+from omegaconf import DictConfig, OmegaConf
 import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
@@ -10,7 +11,7 @@ import torchvision
 from torch import nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.transforms import transforms
-from typing import Dict, List
+from typing import Dict, List, Literal
 import math
 from torchvision.models import (
     efficientnet_b0,
@@ -286,18 +287,28 @@ class FiLMedJoiner(nn.Sequential):
         return out, pos
 
 
-def build_backbone(args):
-    position_embedding = build_position_encoding(args)
-    train_backbone = args.lr_backbone > 0
-    return_interm_layers = args.masks
-    if "film" in args.backbone:
-        print("Using FiLMed backbone.")
-        backbone = FilMedBackbone(args.backbone)
+def build_image_backbone(
+    lr_backbone: float,
+    masks: bool,
+    backbone_type: Literal["efficientnet_b3film"],
+    position_encoding_cfg: DictConfig
+
+):
+    position_embedding = build_position_encoding(
+        position_encoding_cfg.hidden_dim, 
+        position_encoding_cfg.position_embedding_type
+    )
+    train_backbone = lr_backbone > 0
+    return_interm_layers = masks
+    if "film" in backbone_type:
+        backbone = FilMedBackbone(backbone_type)
         model = FiLMedJoiner(backbone, position_embedding)
     else:
+        raise NotImplementedError()
+        # below is from the old code, but not used. keeping for reference
         backbone = Backbone(
-            args.backbone, train_backbone, return_interm_layers, args.dilation
+            backbone_type, train_backbone, return_interm_layers, args.dilation
         )
         model = Joiner(backbone, position_embedding)
-    model.num_channels = backbone.num_channels
+    model.num_channels = backbone.num_channels # type:ignore
     return model

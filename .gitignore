@@ -20,3 +20,7 @@ devel
 logs
 
 saved_runs
+
+checkpoints
+
+temp.py

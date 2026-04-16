@@ -24,6 +24,12 @@ The high-level policy tree is present, but it should still be treated as an acti
 
 ## Quick Start
 
+**Set ENV variable to repository root:**
+
+```bash
+export SRTH_NEW_ROOT=<path/to/srth-new/repo>
+```
+
 If you only want to train policies, the shortest path is:
 
 ```bash
@@ -307,3 +313,20 @@ Treat those values as machine-specific examples rather than universal defaults.
 
 The high-level policy tree lives under [`src/srth_new/high_level_policy/`](src/srth_new/high_level_policy) and [`conf/high_level_policy/`](conf/high_level_policy), but it is still best understood as a scaffold.
 Use it as a starting point for experiments rather than expecting a complete end-to-end workflow.
+
+## Third Party Modules
+
+Clone all submodules with:
+
+```bash
+git submodule update --init --recursive
+```
+
+### EndoSynth
+
+Download the checkpoints for the DepthAnything models finetuned on surgical data.:
+
+```bash
+wget -O ${SRTH_NEW_ROOT}/src/srth_new/general/third_party/EndoSynth/checkpoints/dav1-f.pth https://digitalsurgery-public.s3.eu-west-1.amazonaws.com/EndoSynth/weights/dav1-f.pth
+wget -O ${SRTH_NEW_ROOT}/src/srth_new/general/third_party/EndoSynth/checkpoints/dav2-f.pth https://digitalsurgery-public.s3.eu-west-1.amazonaws.com/EndoSynth/weights/dav2-f.pth
+```

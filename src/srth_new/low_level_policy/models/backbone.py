@@ -31,5 +31,5 @@ class ImageBackbone(nn.Module):
         return [features], [pos]
 
 
-def build_backbone(name: str, pretrained: bool, hidden_dim: int) -> ImageBackbone:
+def build_backbone_local(name: str, pretrained: bool, hidden_dim: int) -> ImageBackbone:
     return ImageBackbone(name=name, pretrained=pretrained, hidden_dim=hidden_dim)

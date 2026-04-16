@@ -6,7 +6,7 @@ import torch
 from torch import nn
 from torch.autograd import Variable
 import numpy as np
-from .backbone import build_backbone
+from .backbone import build_image_backbone
 from .transformer import build_transformer, TransformerEncoder, TransformerEncoderLayer, build_transformer_decoder
 
 import IPython
@@ -441,7 +441,7 @@ def build(args):
     # From image
     backbones = []
     for _ in args.camera_names:
-        backbone = build_backbone(args)
+        backbone = build_image_backbone(args)
         backbones.append(backbone)
 
     if args.model_type=="ACT":
@@ -484,7 +484,7 @@ def build_cnnmlp(args):
     # From image
     backbones = []
     for _ in args.camera_names:
-        backbone = build_backbone(args)
+        backbone = build_image_backbone(args)
         backbones.append(backbone)
 
     model = CNNMLP(

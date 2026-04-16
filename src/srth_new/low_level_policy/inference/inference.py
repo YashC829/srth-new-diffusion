@@ -351,14 +351,23 @@ class LowLevelPolicy:
         self._execution_stop_event = None
 
     def start_action_execution(self, actions_psm1, actions_psm2):
-        self.stop_action_execution()
-        self._execution_stop_event = threading.Event()
-        self._execution_thread = threading.Thread(
-            target=self.execute_actions,
-            args=(actions_psm1, actions_psm2, self._execution_stop_event),
-            daemon=True,
-        )
-        self._execution_thread.start()
+        # self.stop_action_execution()
+        # self._execution_stop_event = threading.Event()
+        # self._execution_thread = threading.Thread(
+        #     target=self.execute_actions,
+        #     args=(actions_psm1, actions_psm2, self._execution_stop_event),
+        #     daemon=True,
+        # )
+        # self._execution_thread.start()
+
+        # the old code's way of doing it. let's test to see if this works...
+        for jj in range(30):
+            self.ral.spin_and_execute(self.psm1_app.run_full_pose_goal, actions_psm1[jj])
+            self.ral.spin_and_execute(self.psm2_app.run_full_pose_goal, actions_psm2[jj])
+            time.sleep(0.18)
+
+
+
 
     ## --------------------- main loop -----------------------
 
