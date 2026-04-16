@@ -17,6 +17,8 @@ filelock==3.25.2
 fsspec==2026.3.0
 gitdb==4.0.12
 gitpython==3.1.46
+gradio==6.12.0
+gradio_imageslider==0.0.20
 h11==0.16.0
 h5py==3.16.0
 hf-xet==1.4.3
@@ -53,6 +55,7 @@ nvidia-nvjitlink==13.0.88
 nvidia-nvshmem-cu13==3.4.5
 nvidia-nvtx==13.0.85
 omegaconf==2.3.0
+opencv-python==4.10.0
 pandas==3.0.2
 parso==0.8.6
 pexpect==4.9.0
@@ -89,3 +92,9 @@ typer==0.24.1
 typing-inspection==0.4.2
 wandb==0.25.1
 wcwidth==0.6.0
+
+# endoscope depth
+-e src/srth_new/general/third_party/EndoSynth/third_party/Depth-Anything
+-e src/srth_new/general/third_party/EndoSynth/third_party/Depth-Anything-V2
+-e src/srth_new/general/third_party/EndoSynth/third_party/EndoDAC
+-e src/srth_new/general/third_party/EndoSynth/third_party/MiDaS

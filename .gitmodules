@@ -1,0 +1,3 @@
+[submodule "src/srth_new/general/third_party/EndoSynth"]
+	path = src/srth_new/general/third_party/EndoSynth
+	url = git@github.com:gbyrd-research/EndoSynth.git
