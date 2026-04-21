@@ -71,8 +71,8 @@ def run_policy_step(
         with torch.inference_mode():
             policy.eval()
             for data in dataloader:
-                image_data, current_pose_data, action_data, is_pad, command_text = utils.collect_data(data, device)
-                forward_dict = policy(image_data, current_pose_data, action_data, is_pad, command_text)
+                endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text = utils.collect_data(data, device)
+                forward_dict = policy(endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text)
 
                 metrics.append(utils.detach_dict(forward_dict))
     
@@ -80,8 +80,8 @@ def run_policy_step(
     else:
         policy.train()
         for data in dataloader:
-            img_stack, current_pose_data, action_data, is_pad, command_text, endoscope_img_spatial_tf_only = utils.collect_data(data, device)
-            forward_dict = policy(img_stack, current_pose_data, action_data, is_pad, command_text, endoscope_img_spatial_tf_only)
+            endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text = utils.collect_data(data, device)
+            forward_dict = policy(endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text)
 
             loss = forward_dict["loss"]
             loss.backward()

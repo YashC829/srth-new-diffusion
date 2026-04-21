@@ -1,6 +1,6 @@
 defaults:
   - dataloader: example                # Sample dataloader settings for low-level training.
-  - policy: act_depth                        # ACT policy architecture and optimizer defaults.
+  - policy: act                        # ACT policy architecture and optimizer defaults.
   - override hydra/job_logging: custom # Write logs both to stdout and to the Hydra run dir.
   - _self_
 

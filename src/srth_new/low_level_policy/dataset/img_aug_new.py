@@ -39,7 +39,8 @@ class ImageAug(nn.Module):
         )
 
     Supported kinds:
-        - "image": bilinear interpolation + color jitter eligible
+        - "image": bilinear interpolation + color jitter eligible;
+                   expected as uint8 in [0, 255]
         - "depth": bilinear interpolation + no color jitter
         - "mask": nearest interpolation + no color jitter
     """
@@ -106,7 +107,7 @@ class ImageAug(nn.Module):
             kinds:
                 Sequence of same length as inputs.
                 Each entry must be either:
-                    - "image"
+                    - "image" (expected as uint8 in [0, 255])
                     - "depth"
                     - "mask"
 
@@ -206,6 +207,12 @@ class ImageAug(nn.Module):
             if x.ndim != 4:
                 raise ValueError(
                     f"Input {idx} must have shape (B, C, H, W), got {tuple(x.shape)}"
+                )
+
+            if kind == "image" and x.dtype != torch.uint8:
+                raise TypeError(
+                    f"Input {idx} with kind 'image' must be torch.uint8 with values in "
+                    f"[0, 255], got {x.dtype}."
                 )
 
             if ref_shape is None:
