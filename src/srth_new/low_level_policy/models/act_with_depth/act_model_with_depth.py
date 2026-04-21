@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import List, Literal
 
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import torch
 from torchvision import transforms
 from torch.nn import functional as F
@@ -16,7 +16,7 @@ from srth_new.low_level_policy.models.detr.models.detr_vae import build_encoder
 from srth_new.low_level_policy.models.act_with_depth.detr_vae_depth import (
     DETRVAEDepth,
 )
-from src.srth_new.general.third_party.EndoSynth.endosynth.models import load as load_depth_model
+from srth_new.general.third_party.EndoSynth.endosynth.models import load as load_depth_model
 from srth_new.low_level_policy.dataset.img_aug_new import ImageAug
 
 import logging
@@ -105,8 +105,6 @@ class ACTPolicyDepth(DVRKPolicy):
         # get depth model
         self.MAX_DEPTH_VAL = 0.3
         self.depth_model = load_depth_model("dav2")
-        self.depth_debug_limit = int(os.environ.get("SRTH_DEPTH_DEBUG_LIMIT", "8"))
-        self.depth_debug_saved = 0
 
         # BUILD MODEL AND OPTIMIZER
         img_backbones = list()
@@ -155,6 +153,24 @@ class ACTPolicyDepth(DVRKPolicy):
             aug_dict[camera_name] = ImageAug(**camera_aug_cfg)
 
         return aug_dict
+
+    @staticmethod
+    def _serialize_img_resize_cfg(img_resize_cfg: DictConfig) -> object:
+        return OmegaConf.to_container(
+            img_resize_cfg,
+            resolve=True,
+            throw_on_missing=True,
+        )
+
+    @staticmethod
+    def _deserialize_img_resize_cfg(serialized_img_resize_cfg: object) -> DictConfig:
+        if isinstance(serialized_img_resize_cfg, DictConfig):
+            return serialized_img_resize_cfg
+
+        restored_cfg = OmegaConf.create(serialized_img_resize_cfg)
+        if not isinstance(restored_cfg, DictConfig):
+            raise TypeError("Checkpoint img_resize_cfg must deserialize to a mapping.")
+        return restored_cfg
 
     def _move_depth_model_to_device(self, device: torch.device) -> None:
         """Move the wrapped EndoSynth depth model to the requested device."""
@@ -251,42 +267,6 @@ class ACTPolicyDepth(DVRKPolicy):
             self._normalize_command_text(command_text)
         )
 
-    def _split_rgb_and_depth(self, image):
-        if isinstance(image, dict):
-            rgb_image = image.get("rgb", image.get("image"))
-            depth_image = image.get("depth")
-        elif isinstance(image, (tuple, list)):
-            if len(image) != 2:
-                raise ValueError(
-                    "Depth policy expects image input as (rgb_image, depth_image)."
-                )
-            rgb_image, depth_image = image
-        elif isinstance(image, torch.Tensor):
-            if image.dim() != 5:
-                raise ValueError(
-                    "Image tensor must have shape (B, num_images, C, H, W)."
-                )
-            if image.shape[1] == len(self.model.camera_names) + 1: # type:ignore
-                rgb_image = image[:, : len(self.model.camera_names)] # type:ignore
-                depth_image = image[:, len(self.model.camera_names)] # type:ignore
-            else:
-                rgb_image = image
-                depth_image = None
-        else:
-            raise TypeError(
-                "Unsupported image input type for depth policy: "
-                f"{type(image).__name__}"
-            )
-
-        if rgb_image is None or depth_image is None:
-            raise ValueError(
-                "Depth policy requires both RGB images and an aligned depth image. "
-                "Pass a dict with keys {'rgb', 'depth'}, a tuple "
-                "(rgb_image, depth_image), or a tensor with the depth image "
-                "appended after the RGB camera images."
-            )
-        return rgb_image, depth_image
-
     def _serialize_policy_config(self) -> dict[str, object]:
         policy_config = super()._serialize_policy_config()
         policy_config.update(
@@ -307,6 +287,17 @@ class ACTPolicyDepth(DVRKPolicy):
             model_dict.get("training_text_conditionings", []) # type:ignore
         )
 
+        serialized_img_resize_cfg = model_dict.get("img_resize_cfg")
+        policy_config = model_dict.get("policy_config")
+        if serialized_img_resize_cfg is None and isinstance(
+            policy_config, (dict, DictConfig)
+        ):
+            serialized_img_resize_cfg = policy_config.get("img_resize_cfg")
+        if serialized_img_resize_cfg is not None:
+            self.img_resize_cfg = self._deserialize_img_resize_cfg(
+                serialized_img_resize_cfg
+            )
+
     def _get_depth(self, img: torch.Tensor):
         """Given an rgb image, generate the depth map for the image."""
         return self.depth_model.infer_tensor(img)
@@ -315,7 +306,8 @@ class ACTPolicyDepth(DVRKPolicy):
             self, 
             endoscope_img: torch.Tensor, 
             lw_img: torch.Tensor, 
-            rw_img: torch.Tensor
+            rw_img: torch.Tensor,
+            use_augmentation: bool = False
         ):
         """Resizes images, gets depth image from endoscope image, and performs
         image augmentation."""
@@ -341,12 +333,13 @@ class ACTPolicyDepth(DVRKPolicy):
         # AUGMENT IMAGES
         # pass the endo and depth images together to get consistent augmentations
         # across the two images
-        endo_processed, depth_processed = self.img_aug_dict["endoscope_img"](
-            endo_processed, depth_processed, kinds=["image", "depth"]
-        )
+        if use_augmentation:
+            endo_processed, depth_processed = self.img_aug_dict["endoscope_img"](
+                endo_processed, depth_processed, kinds=["image", "depth"]
+            )
 
-        lw_processed = self.img_aug_dict["lw_img"](lw_processed, apply_random_shift=False)
-        rw_processed = self.img_aug_dict["rw_img"](rw_processed, apply_random_shift=False)
+            lw_processed = self.img_aug_dict["lw_img"](lw_processed, apply_random_shift=False)
+            rw_processed = self.img_aug_dict["rw_img"](rw_processed, apply_random_shift=False)
 
         # normalize images with imagenet mean/std
         endo_processed = self.image_normalize(endo_processed / 255.0)
@@ -357,20 +350,13 @@ class ACTPolicyDepth(DVRKPolicy):
         depth_processed = torch.clamp(depth_processed, min=0.0, max=self.MAX_DEPTH_VAL)
         depth_processed = depth_processed / self.MAX_DEPTH_VAL
 
-        return {
-            "endoscope_img": endo_processed, 
-            "depth_img": depth_processed, 
-            "lw_img": lw_processed, 
-            "rw_img": rw_processed
-        }
-
+        return endo_processed, depth_processed, lw_processed, rw_processed
 
     def forward(
         self,
-        endoscope_img,
-        depth_img,
-        lw_img,
-        rw_img,
+        endoscope_img: torch.Tensor, 
+        lw_img: torch.Tensor, 
+        rw_img: torch.Tensor,
         current_pose,
         actions=None,
         is_pad=None,
@@ -403,37 +389,40 @@ class ACTPolicyDepth(DVRKPolicy):
             either a tensor of predicted policy actions or a tensor of absolute
             robot actions.
         """
+        endoscope_img, depth_img, lw_img, rw_img = self.preprocess_images(
+            endoscope_img, lw_img, rw_img, use_augmentation=self.training
+        )
+        # stack the images
+        rgb_img_stack = torch.stack([endoscope_img, lw_img, rw_img], dim=1)
         env_state = None
-        endoscope_img = self.image_normalize(endoscope_img)
-        depth_image = self.image_normalize(depth_image)
-        batch_size = endoscope_img.shape[0]
+        batch_size = rgb_img_stack.shape[0]
         # since the dVRK is so inaccurate in an absolute setting, we set the absolute
         # qpos to zero so that this will not have an impact on the model
         model_qpos = torch.zeros(
-            (batch_size, self.state_dim), dtype=endoscope_img.dtype, device=endoscope_img.device
+            (batch_size, self.state_dim), dtype=rgb_img_stack.dtype, device=rgb_img_stack.device
         )
-        command_embedding = self._encode_command_text(command_text, endoscope_img.device)
+        command_embedding = self._encode_command_text(command_text, rgb_img_stack.device)
 
-        if actions is not None:  # training time
+        if actions is not None: # training or validation
             if is_pad is None:
                 raise Exception()
             # we keep track of the various commands to send to the robot and
             # save these in the model checkpoint
             self._record_training_command_text(command_text)
             processed_actions = self.prepare_actions_for_training(
-                current_pose, actions, is_pad, endoscope_img.device
+                current_pose, actions, is_pad, rgb_img_stack.device
             )
             processed_actions = processed_actions[:, : self.num_queries]
             is_pad = is_pad[:, : self.num_queries]
 
             a_hat, is_pad_hat, (mu, logvar) = self.model(
                 model_qpos,
-                endoscope_img,
+                rgb_img_stack,
+                depth_img,
                 env_state,
                 processed_actions,
                 is_pad,
                 command_embedding=command_embedding,
-                depth_image=depth_image,
             )
             total_kld, dim_wise_kld, mean_kld = kl_divergence(mu, logvar)
             loss_dict = dict()
@@ -443,13 +432,13 @@ class ACTPolicyDepth(DVRKPolicy):
             loss_dict["kl"] = total_kld[0]
             loss_dict["loss"] = loss_dict["l1"] + loss_dict["kl"] * self.kl_weight
             return loss_dict
-        else:  # inference time
+        else:  # pure inference time
             a_hat, _, (_, _) = self.model(
                 model_qpos,
-                endoscope_img,
+                rgb_img_stack,
+                depth_img,
                 env_state,
-                command_embedding=command_embedding,
-                depth_image=depth_image,
+                command_embedding=command_embedding
             )  # no action, sample from prior
             if return_policy_actions:
                 return a_hat

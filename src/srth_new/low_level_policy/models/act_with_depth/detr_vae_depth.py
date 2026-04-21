@@ -49,26 +49,23 @@ class DETRVAEDepth(nn.Module):
         if use_language:
             self.lang_embed_proj = nn.Linear(768, hidden_dim)
 
-        if backbones is not None:
-            self.input_proj = nn.Conv2d(
-                backbones[0].num_channels, hidden_dim, kernel_size=1
-            )
-            self.depth_input_proj = nn.Conv2d(
-                depth_backbone.num_channels, hidden_dim, kernel_size=1
-            )
-            self.backbones = nn.ModuleList(backbones)
-            self.depth_backbone = depth_backbone
-            self.input_proj_robot_state = nn.Linear(self.input_size, hidden_dim)
-            self.aligned_modality_embed = nn.Embedding(2, hidden_dim)
-            self.aligned_feature_fusion = nn.Conv2d(
-                hidden_dim * 2, hidden_dim, kernel_size=1
-            )
-        else:
-            self.input_proj_robot_state = nn.Linear(self.input_size, hidden_dim)
-            self.input_proj_env_state = nn.Linear(self.input_size, hidden_dim)
-            self.pos = torch.nn.Embedding(2, hidden_dim)
-            self.backbones = None
-            self.depth_backbone = None
+        if backbones is None:
+            raise Exception("Must pass backbones to model. Backbones cannot be None")
+
+        self.input_proj = nn.Conv2d(
+            backbones[0].num_channels, hidden_dim, kernel_size=1
+        )
+        self.depth_1d_to_3d_proj = nn.Conv2d(in_channels=1, out_channels=3, kernel_size=1)
+        self.depth_input_proj = nn.Conv2d(
+            depth_backbone.num_channels, hidden_dim, kernel_size=1
+        )
+        self.backbones = nn.ModuleList(backbones)
+        self.depth_backbone = depth_backbone
+        self.input_proj_robot_state = nn.Linear(self.input_size, hidden_dim)
+        self.aligned_modality_embed = nn.Embedding(2, hidden_dim)
+        self.aligned_feature_fusion = nn.Conv2d(
+            hidden_dim * 2, hidden_dim, kernel_size=1
+        )
 
         self.latent_dim = 32
         self.cls_embed = nn.Embedding(1, hidden_dim)
@@ -101,12 +98,12 @@ class DETRVAEDepth(nn.Module):
     def forward(
         self,
         qpos,
-        image,
+        image_stack,
+        depth_image,
         env_state,
         actions=None,
         is_pad=None,
-        command_embedding=None,
-        depth_image=None,
+        command_embedding=None
     ):
         """Forward pass.
 
@@ -167,7 +164,7 @@ class DETRVAEDepth(nn.Module):
             first_rgb_pos = None
             for cam_id, _ in enumerate(self.camera_names):
                 features, pos = self._forward_backbone(
-                    self.backbones[cam_id], image[:, cam_id], command_embedding
+                    self.backbones[cam_id], image_stack[:, cam_id], command_embedding
                 )
                 projected_feature = self.input_proj(features)
                 if cam_id == 0:
@@ -177,8 +174,9 @@ class DETRVAEDepth(nn.Module):
                     all_cam_features.append(projected_feature)
                     all_cam_pos.append(pos)
 
+            depth_3d = self.depth_1d_to_3d_proj(depth_image)
             depth_features, _ = self._forward_backbone(
-                self.depth_backbone, depth_image, command_embedding
+                self.depth_backbone, depth_3d, command_embedding
             )
             depth_feature = self.depth_input_proj(depth_features)
 

@@ -19,10 +19,6 @@ img_resize_cfg:
 
 img_aug_cfg:
   endoscope_img:
-    debug_save_dir: ./srth_img_aug_debug
-    debug_name: endoscope_img
-    debug_max_calls: 1
-    debug_max_samples: 8
 
     # spatial
     crop_ratio: 0.95
@@ -44,10 +40,6 @@ img_aug_cfg:
     max_shift_y_ratio: 0.2
 
   lw_img:
-    debug_save_dir: ./srth_img_aug_debug
-    debug_name: lw_img
-    debug_max_calls: 1
-    debug_max_samples: 8
     
     # spatial
     crop_ratio: 0.95
@@ -69,10 +61,6 @@ img_aug_cfg:
     max_shift_y_ratio: 0.2 
 
   rw_img:
-    debug_save_dir: ./srth_img_aug_debug
-    debug_name: rw_img
-    debug_max_calls: 1
-    debug_max_samples: 8
     
     # spatial
     crop_ratio: 0.95

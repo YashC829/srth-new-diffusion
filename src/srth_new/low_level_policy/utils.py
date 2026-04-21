@@ -382,25 +382,6 @@ def detach_dict(d):
     return new_d
 
 def collect_data(data, device: torch.device):
-    # if len(data) == 5:
-    #     image_data, current_pose_data, action_data, is_pad, command_text = data
-    #     image_input = image_data.to(device)
-    # elif len(data) == 6:
-    #     image_data, depth_data, current_pose_data, action_data, is_pad, command_text = data
-    #     image_input = {
-    #         "rgb": image_data.to(device),
-    #         "depth": depth_data.to(device),
-    #     }
-    # elif len(data) == 7:
-    #     image_data, depth_data, current_pose_data, action_data, is_pad, command_text, endo_img_spatial_tf_only = data
-    #     image_input = {
-    #         "rgb": image_data.to(device),
-    #         "depth": depth_data.to(device),
-    #     }
-    # else:
-    #     raise ValueError(
-    #         f"Expected batch with 5 or 6 items, received {len(data)} items."
-    #     )
     endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text = data
     endoscope_img = endoscope_img.to(device)
     lw_img = lw_img.to(device)
