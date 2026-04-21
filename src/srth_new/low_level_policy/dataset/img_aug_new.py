@@ -141,16 +141,6 @@ class ImageAug(nn.Module):
 
         original_dtypes = [x.dtype for x in inputs]
         processed = [self._to_float_tensor(x) for x in inputs]
-        debug_enabled = self._debug_enabled()
-        debug_call_idx = self.debug_call_count if debug_enabled else None
-
-        if debug_enabled:
-            self._save_debug_stage(
-                stage_name="input",
-                tensors=processed,
-                kinds=kinds,
-                call_idx=debug_call_idx,
-            )
 
         b, _, h, w = processed[0].shape
 
@@ -161,13 +151,6 @@ class ImageAug(nn.Module):
                 self._apply_spatial_to_tensor(x, kind, crop_params, rot_params)
                 for x, kind in zip(processed, kinds)
             ]
-            if debug_enabled:
-                self._save_debug_stage(
-                    stage_name="after_spatial",
-                    tensors=processed,
-                    kinds=kinds,
-                    call_idx=debug_call_idx,
-                )
 
         if apply_random_shift:
             shift_params = self._sample_shift_params(
@@ -177,53 +160,23 @@ class ImageAug(nn.Module):
                 self._apply_shift_to_tensor(x, kind, shift_params)
                 for x, kind in zip(processed, kinds)
             ]
-            if debug_enabled:
-                self._save_debug_stage(
-                    stage_name="after_random_shift",
-                    tensors=processed,
-                    kinds=kinds,
-                    call_idx=debug_call_idx,
-                )
 
         if apply_color:
             processed = [
                 self._apply_color_to_tensor(x, kind)
                 for x, kind in zip(processed, kinds)
             ]
-            if debug_enabled:
-                self._save_debug_stage(
-                    stage_name="after_color",
-                    tensors=processed,
-                    kinds=kinds,
-                    call_idx=debug_call_idx,
-                )
 
         if apply_pixel_dropout:
             hole_mask = self._sample_dropout_mask(
                 b, h, w, processed[0].device, processed[0].dtype
             )
             processed = [x * hole_mask for x in processed]
-            if debug_enabled:
-                self._save_debug_stage(
-                    stage_name="after_pixel_dropout",
-                    tensors=processed,
-                    kinds=kinds,
-                    call_idx=debug_call_idx,
-                )
 
         outputs = [
             self._restore_dtype(x, dtype, kind)
             for x, dtype, kind in zip(processed, original_dtypes, kinds)
         ]
-
-        if debug_enabled:
-            self._save_debug_stage(
-                stage_name="output",
-                tensors=outputs,
-                kinds=kinds,
-                call_idx=debug_call_idx,
-            )
-            self.debug_call_count += 1
 
         if len(outputs) == 1:
             return outputs[0]
@@ -500,55 +453,3 @@ class ImageAug(nn.Module):
             return x.round().to(dtype)
 
         return x.to(dtype)
-
-    def _debug_enabled(self) -> bool:
-        return (
-            self.debug_save_dir is not None
-            and self.debug_max_calls > 0
-            and self.debug_call_count < self.debug_max_calls
-        )
-
-    def _save_debug_stage(
-        self,
-        stage_name: str,
-        tensors: Sequence[torch.Tensor],
-        kinds: Sequence[str],
-        call_idx: int | None,
-    ) -> None:
-        if self.debug_save_dir is None or call_idx is None:
-            return
-
-        stage_dir = self.debug_save_dir / self.debug_name / f"call_{call_idx:04d}"
-        stage_dir.mkdir(parents=True, exist_ok=True)
-        num_samples = min(self.debug_max_samples, tensors[0].shape[0])
-
-        for sample_idx in range(num_samples):
-            panels = [
-                self._tensor_to_debug_image(tensor[sample_idx], kind)
-                for tensor, kind in zip(tensors, kinds)
-            ]
-            panel = np.concatenate(panels, axis=1)
-            Image.fromarray(panel).save(stage_dir / f"{stage_name}_sample_{sample_idx:03d}.png")
-
-    def _tensor_to_debug_image(self, tensor: torch.Tensor, kind: str) -> np.ndarray:
-        image = tensor.detach().cpu()
-
-        if kind == "depth":
-            return depth2rgb(tensor.cpu().numpy().squeeze(), 0.02, 0.2).astype(np.uint8)
-
-        if image.ndim != 3:
-            raise ValueError(f"Expected CHW tensor for debug image save, got {tuple(image.shape)}")
-
-        if image.dtype == torch.uint8:
-            image_np = image.permute(1, 2, 0).numpy()
-            if image_np.shape[2] == 1:
-                image_np = np.repeat(image_np, 3, axis=2)
-            return image_np.astype(np.uint8)
-
-        # dtype should be float here
-        if image.shape[0] >= 3 and kind == "image":
-            image_np = image.permute(1, 2, 0).numpy()
-            image_np = (image_np * 255.0).clip(0.0, 255.0).astype(np.uint8)
-            return image_np
-
-        raise Exception("Shouldnt get here...")
