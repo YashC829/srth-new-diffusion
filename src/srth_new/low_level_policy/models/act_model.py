@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from typing import List, Literal
 
+import albumentations as A
+import cv2
+import numpy as np
 from omegaconf import DictConfig
+import kornia.augmentation as K
 import torch
 from torchvision import transforms
+import torchvision.transforms as T
 from torch.nn import functional as F
+from torch import nn
 
 from srth_new.general.utils.lang_encoding import encode_text, initialize_model_and_tokenizer
 from .dvrk_policy import DVRKPolicy
@@ -130,6 +136,161 @@ class ACTPolicy(DVRKPolicy):
         log.info(f"KL Weight {self.kl_weight}")
         self.num_queries = self.model.num_queries # type:ignore
 
+        # self._init_data_aug(data_aug_cfg)
+
+    # def _init_data_aug(self, data_aug_cfg: DictConfig):
+    #     self.data_aug = nn.ModuleDict()
+
+    #     for camera_name, aug_cfg in data_aug_cfg.items():
+    #         camera_aug = nn.ModuleDict()
+    #         targ_shape = aug_cfg.resize_shape   # [H, W]
+    #         targ_h, targ_w = int(targ_shape[0]), int(targ_shape[1])
+    #         aug_keys = set(str(x) for x in aug_cfg.keys())
+
+    #         if "spatial" in aug_keys:
+    #             spatial_cfg = aug_cfg.spatial
+    #             crop_h = int(targ_h * spatial_cfg.crop_ratio)
+    #             crop_w = int(targ_w * spatial_cfg.crop_ratio)
+
+    #             camera_aug["spatial"] = nn.Sequential(
+    #                 K.RandomCrop(
+    #                     size=(crop_h, crop_w),
+    #                     p=1.0,
+    #                     same_on_batch=False,
+    #                 ),
+    #                 K.Resize(
+    #                     size=(targ_h, targ_w),
+    #                     antialias=True,
+    #                 ),
+    #                 K.RandomRotation(
+    #                     degrees=5.0,
+    #                     p=1.0,
+    #                     same_on_batch=False,
+    #                     resample="BILINEAR",
+    #                     keepdim=True,
+    #                 ),
+    #             )
+
+    #         if "color_jitter" in aug_keys:
+    #             cj_cfg = aug_cfg.color_jitter
+    #             camera_aug["color_jitter"] = K.ColorJitter(
+    #                 brightness=cj_cfg.brightness,
+    #                 contrast=cj_cfg.contrast,
+    #                 saturation=cj_cfg.saturation,
+    #                 hue=cj_cfg.hue,
+    #                 p=1.0,
+    #                 same_on_batch=False,
+    #             )
+
+    #         if "pixel_dropout" in aug_keys:
+    #             pd_cfg = aug_cfg.pixel_dropout
+    #             min_height = max(1, targ_h // 40)
+    #             min_width = max(1, targ_w // 40)
+    #             max_height = min(targ_h // 30, targ_h)
+    #             max_width = min(targ_w // 30, targ_w)
+
+    #             camera_aug["pixel_dropout"] = CoarseDropoutTorch(
+    #                 min_holes=pd_cfg.min_holes,
+    #                 max_holes=pd_cfg.max_holes,
+    #                 min_height=min_height,
+    #                 max_height=max_height,
+    #                 min_width=min_width,
+    #                 max_width=max_width,
+    #                 fill_value=0.0,
+    #                 p=pd_cfg.p,
+    #             )
+
+    #         if "random_shift" in aug_keys:
+    #             rs_cfg = aug_cfg.random_shift
+
+    #             # Kornia RandomAffine translate expects FRACTIONS of image size.
+    #             camera_aug["random_shift"] = K.RandomAffine(
+    #                 degrees=0.0,
+    #                 translate=(
+    #                     float(rs_cfg.max_shift_x_ratio),
+    #                     float(rs_cfg.max_shift_y_ratio),
+    #                 ),
+    #                 scale=None,
+    #                 shear=None,
+    #                 p=1.0,
+    #                 same_on_batch=False,
+    #                 resample="BILINEAR",
+    #                 padding_mode="border",
+    #                 keepdim=True,
+    #             )
+
+    #         self.data_aug[camera_name] = camera_aug
+
+    # def _init_data_aug(self, data_aug_cfg: DictConfig):
+
+    #     self.data_aug = dict()
+
+    #     for camera_name, aug_cfg in data_aug_cfg.items():
+    #         self.data_aug[camera_name] = dict()
+    #         targ_shape = aug_cfg.resize_shape
+    #         aug_keys = set(str(x) for x in aug_cfg.keys())
+
+    #         if "spatial" in aug_keys:
+    #             spatial_cfg = aug_cfg.spatial
+    #             self.data_aug[camera_name]["spatial"] = A.Compose([
+    #                     A.RandomCrop(
+    #                         height=int(targ_shape[0] * spatial_cfg.crop_ratio), 
+    #                         width=int(targ_shape[1] * spatial_cfg.crop_ratio)
+    #                     ),
+    #                     A.Resize(height=targ_shape[0], width=targ_shape[1]),
+    #                     A.Rotate(limit=5, border_mode=cv2.BORDER_REFLECT_101),
+    #                 ])
+                
+    #         if "color_jitter" in aug_keys:
+    #             cj_cfg = aug_cfg.color_jitter
+    #             self.data_aug[camera_name]["color_jitter"] = T.ColorJitter(
+    #                 brightness=cj_cfg.brightness, contrast=cj_cfg.contrast, 
+    #                 saturation=cj_cfg.saturation, hue=cj_cfg.hue
+    #             )
+
+    #         if "pixel_dropout" in aug_keys:
+    #             pd_cfg = aug_cfg.pixel_dropout
+    #             min_height = max(1, targ_shape[0] // 40)
+    #             min_width = max(1, targ_shape[1] // 40)
+    #             max_height = min(targ_shape[0] // 30, targ_shape[0])
+    #             max_width = min(targ_shape[1] // 30, targ_shape[1])
+    #             self.data_aug[camera_name]["pixel_dropout"] = A.Compose([
+    #                 A.CoarseDropout(max_holes=pd_cfg.max_holes, max_height=max_height, max_width=max_width, # type:ignore
+    #                                 min_holes=pd_cfg.min_holes, min_height=min_height, min_width=min_width, # type:ignore
+    #                                 fill_value=0, p=pd_cfg.p), # type:ignore
+    #             ]) # type:ignore
+
+    #         if "random_shift" in aug_keys:
+    #             rs_cfg = aug_cfg.random_shift
+
+    #             MAX_SHIFT_X = int(targ_shape[1] * rs_cfg.max_shift_x_ratio)
+    #             MAX_SHIFT_Y = int(targ_shape[0] * rs_cfg.max_shift_y_ratio)
+    #             def random_shift(img):
+    #                 shift_x = np.random.randint(-MAX_SHIFT_X, MAX_SHIFT_X)
+    #                 shift_y = np.random.randint(-MAX_SHIFT_Y, MAX_SHIFT_Y)
+    #                 img = T.functional.affine(img, angle=0, translate=(shift_x, shift_y), scale=1.0, shear=0)
+    #                 return img
+
+    #             self.data_aug[camera_name]["random_shift"] = random_shift
+
+    # def _augment_img(self, img: torch.Tensor, camera_name: str):
+    #     img_aug_dict = self.data_aug[camera_name]
+
+    #     aug_types = set(img_aug_dict.keys())
+    #     device = img.device
+    #     img = img.cpu().numpy()
+
+    #     if "spatial" in aug_types:
+    #         img = img_aug_dict["spatial"](img)
+    #     if "pixel_dropout" in aug_types:
+    #         img = img_aug_dict["pixel_dropout"](image=img)
+    #     if "color_jitter" in aug_types:
+    #         img = img_aug_dict["color_jitter"](img)
+    #     if "random_shift" in aug_types:
+    #         img = img_aug_dict["random_shift"](img)
+        
+    #     return torch.tensor(img).to(device)
+
     def _get_param_dict(self, model, backbone_cfg: DictConfig):
         param_dicts = [
             {
@@ -229,7 +390,6 @@ class ACTPolicy(DVRKPolicy):
         self.training_text_conditionings = list(
             model_dict.get("training_text_conditionings", []) # type:ignore
         )
-
 
     def forward(
         self,

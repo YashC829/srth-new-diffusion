@@ -7,10 +7,91 @@ weight_decay: 1e-4
 camera_names: ["left", "left_wrist", "right_wrist"] # Expected image streams in each sample.
 num_queries: 60                                     # Usually should match the dataset chunk size.
 action_dim: 20                                   # Number of action dimensions predicted per timestep.
-action_mode: hybrid_relative 
+action_mode: hybrid_relative
 norm_scheme: std
 use_language: true                      # Whether the policy conditions on language text.
 language_encoder: distilbert            # Text encoder used by the policy for command strings.
+
+img_resize_cfg:
+  left: [360, 480]
+  left_wrist: [360, 480]
+  right_wrist: [360, 480]
+
+img_aug_cfg:
+  endoscope_img:
+    debug_save_dir: ./srth_img_aug_debug
+    debug_name: endoscope_img
+    debug_max_calls: 1
+    debug_max_samples: 8
+
+    # spatial
+    crop_ratio: 0.95
+    rotate_deg: 5.0
+
+    # color_jitter
+    brightness: 0.2
+    contrast: 0.4
+    saturation: 0.5
+    hue: 0.08
+
+    # pixel_dropout
+    max_holes: 128
+    min_holes: 1
+    pixel_dropout_p: 0.8
+
+    # random_shift
+    max_shift_x_ratio: 0.2
+    max_shift_y_ratio: 0.2
+
+  lw_img:
+    debug_save_dir: ./srth_img_aug_debug
+    debug_name: lw_img
+    debug_max_calls: 1
+    debug_max_samples: 8
+    
+    # spatial
+    crop_ratio: 0.95
+    rotate_deg: 5.0
+
+    # color_jitter
+    brightness: 0.2
+    contrast: 0.4
+    saturation: 0.5
+    hue: 0.08
+
+    # pixel_dropout
+    max_holes: 128
+    min_holes: 1
+    pixel_dropout_p: 0.8
+
+    # random_shift
+    max_shift_x_ratio: 0.2
+    max_shift_y_ratio: 0.2 
+
+  rw_img:
+    debug_save_dir: ./srth_img_aug_debug
+    debug_name: rw_img
+    debug_max_calls: 1
+    debug_max_samples: 8
+    
+    # spatial
+    crop_ratio: 0.95
+    rotate_deg: 5.0
+
+    # color_jitter
+    brightness: 0.2
+    contrast: 0.4
+    saturation: 0.5
+    hue: 0.08
+
+    # pixel_dropout
+    max_holes: 128
+    min_holes: 1
+    pixel_dropout_p: 0.8
+
+    # random_shift
+    max_shift_x_ratio: 0.2
+    max_shift_y_ratio: 0.2 
 
 img_backbone_cfg:
   lr_backbone: 1e-5

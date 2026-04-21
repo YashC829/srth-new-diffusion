@@ -37,6 +37,59 @@ encoder_cfg:
   enc_layers: 4
   pre_norm: false
 
+data_aug_cfg:
+
+  endoscope_img:
+    resize_shape: [360, 480]
+    spatial:
+      crop_ratio: 0.95
+    color_jitter: 
+      brightness: 0.2
+      contrast: 0.4
+      saturation: 0.5
+      hue: 0.08
+    pixel_dropout:
+      max_holes: 128
+      min_holes: 1
+      p: 0.8
+    random_shift:
+      max_shift_x_ratio: 0.2
+      max_shift_y_ratio: 0.2 
+
+  lw_img:
+    resize_shape: [360, 480]
+    spatial:
+      crop_ratio: 0.95
+    color_jitter: 
+      brightness: 0.2
+      contrast: 0.4
+      saturation: 0.5
+      hue: 0.08
+    pixel_dropout:
+      max_holes: 128
+      min_holes: 1
+      p: 0.8
+    random_shift:
+      max_shift_x_ratio: 0.2
+      max_shift_y_ratio: 0.2
+
+  rw_img:
+    resize_shape: [360, 480]
+    spatial:
+      crop_ratio: 0.95
+    color_jitter: 
+      brightness: 0.2
+      contrast: 0.4
+      saturation: 0.5
+      hue: 0.08
+    pixel_dropout:
+      max_holes: 128
+      min_holes: 1
+      p: 0.8
+    random_shift:
+      max_shift_x_ratio: 0.2
+      max_shift_y_ratio: 0.2  
+
 # args_override:
 #   policy_class: ACT
 #   lr: 1e-5

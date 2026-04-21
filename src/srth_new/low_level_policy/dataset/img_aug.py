@@ -9,7 +9,8 @@ import albumentations as A
 import json
 
 import IPython
-e = IPython.embed
+import IPython
+e = IPython.embed 
 
 class DataAug(object):
     def __init__(self, img_hw, use_history, stereo=False, mask_prob=0.07, mask_sketch_prob=0.5, dataset_dir=None, wrist_config=None):
@@ -225,6 +226,9 @@ class DataAug(object):
         else:
             sample_np['left'] = self.spatial_transforms(image=sample_np['left'])['image']
 
+        endo_cam_spatial_tf_only = sample_np["left"]
+        endo_cam_spatial_tf_only = torch.from_numpy(endo_cam_spatial_tf_only).permute(2, 0, 1)
+
         # Apply pixel dropout consistently
         if 'left' in sample_np and 'mask' in sample_np:
             aug = self.pixel_dropout(image=sample_np['left'], mask=sample_np['mask'])
@@ -264,4 +268,4 @@ class DataAug(object):
             mask_choice = np.random.choice(list(processed.keys()))
             processed[mask_choice] = torch.zeros_like(processed[mask_choice])
 
-        return processed
+        return processed, endo_cam_spatial_tf_only

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import List, Literal
 
 from omegaconf import DictConfig
 import torch
 from torchvision import transforms
 from torch.nn import functional as F
+
+from PIL import Image
 
 from srth_new.general.utils.lang_encoding import encode_text, initialize_model_and_tokenizer
 from srth_new.low_level_policy.models.dvrk_policy import DVRKPolicy
@@ -15,6 +19,16 @@ from srth_new.low_level_policy.models.detr.models.detr_vae import build_encoder
 from srth_new.low_level_policy.models.act_with_depth.detr_vae_depth import (
     DETRVAEDepth,
 )
+from src.srth_new.general.third_party.EndoSynth.endosynth.models import load as load_depth_model
+from srth_new.low_level_policy.dataset.img_aug_new import ImageAug
+
+from matplotlib import colormaps as cm
+import numpy as np
+def depth2rgb(x: np.ndarray, dmin: float, dmax: float) -> np.ndarray:
+    cmap = cm.get_cmap("Spectral")
+    x = (np.clip(x, dmin, dmax) - dmin) / (dmax - dmin)
+    x = (x * 255).astype(np.uint8)
+    return (cmap(x) * 255)[..., :3]
 
 import logging
 log = logging.getLogger(__name__)
@@ -69,9 +83,11 @@ class ACTPolicyDepth(DVRKPolicy):
             language_encoder: str,
             action_mode: Literal["hybrid_relative", "ego", "relative_endoscope"],
             norm_scheme: Literal["std", "min_max"],
+            img_resize_cfg: DictConfig,
             img_backbone_cfg: DictConfig,
             transformer_cfg: DictConfig,
-            encoder_cfg: DictConfig
+            encoder_cfg: DictConfig,
+            img_aug_cfg: DictConfig
         ):
         """Initialize the policy, optimizer, and optional language encoder.
 
@@ -88,10 +104,21 @@ class ACTPolicyDepth(DVRKPolicy):
             norm_scheme=norm_scheme,
         )
 
+        self.img_resize_cfg = img_resize_cfg
         self.kl_weight = kl_weight
         self.state_dim = action_dim
         self.use_language = use_language
         self.language_encoder = language_encoder
+
+        # build image augmentation pipeline
+        self.img_aug_dict = self._build_img_aug_dict(img_aug_cfg)
+
+        # get depth model
+        self.MAX_DEPTH_VAL = 0.3
+        self.depth_model = load_depth_model("dav2")
+        self.depth_debug_dir = self._build_depth_debug_dir()
+        self.depth_debug_limit = int(os.environ.get("SRTH_DEPTH_DEBUG_LIMIT", "8"))
+        self.depth_debug_saved = 0
 
         # BUILD MODEL AND OPTIMIZER
         img_backbones = list()
@@ -133,6 +160,30 @@ class ACTPolicyDepth(DVRKPolicy):
 
         log.info(f"KL Weight {self.kl_weight}")
         self.num_queries = self.model.num_queries # type:ignore
+
+    def _build_img_aug_dict(self, cfg: DictConfig):
+        aug_dict = dict()
+        for camera_name, camera_aug_cfg in cfg.items():
+            aug_dict[camera_name] = ImageAug(**camera_aug_cfg)
+
+        return aug_dict
+
+    def _move_depth_model_to_device(self, device: torch.device) -> None:
+        """Move the wrapped EndoSynth depth model to the requested device."""
+        self.depth_model.device = torch.device(device)
+        self.depth_model._model = self.depth_model._model.to(device).eval()
+        self.depth_model.act = self.depth_model.act.to(device).eval()
+        # self.depth_model.registered_mean = self.depth_model.registered_mean.to(device)
+        # self.depth_model.registered_std = self.depth_model.registered_std.to(device)
+
+    def to(self, *args, **kwargs):
+        module = super().to(*args, **kwargs)
+        try:
+            device = next(module.parameters()).device
+        except StopIteration:
+            device = next(module.buffers()).device
+        self._move_depth_model_to_device(device)
+        return module
 
     def _get_param_dict(self, model, backbone_cfg: DictConfig):
         param_dicts = [
@@ -270,10 +321,172 @@ class ACTPolicyDepth(DVRKPolicy):
             model_dict.get("training_text_conditionings", []) # type:ignore
         )
 
+    def _build_depth_debug_dir(self) -> Path | None:
+        debug_enabled = os.environ.get("SRTH_SAVE_DEPTH_DEBUG", "").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if not debug_enabled:
+            return None
+
+        base_dir = Path(os.environ.get("SRTH_DEPTH_DEBUG_DIR", "/tmp/srth_depth_debug"))
+        run_name = os.environ.get("SRTH_DEPTH_DEBUG_RUN_NAME", "latest")
+        debug_dir = base_dir / run_name
+        (debug_dir / "original_vs_depth").mkdir(parents=True, exist_ok=True)
+        (debug_dir / "processed_vs_depth").mkdir(parents=True, exist_ok=True)
+        return debug_dir
+
+    def _rgb_tensor_to_uint8_image(self, image: torch.Tensor) -> np.ndarray:
+        image_np = image.detach().cpu().permute(1, 2, 0).numpy()
+        if image_np.dtype == np.uint8:
+            return image_np
+        return np.clip(image_np, 0.0, 255.0).astype(np.uint8)
+
+    def _depth_tensor_to_numpy(self, depth: torch.Tensor) -> np.ndarray:
+        depth_np = depth.detach().cpu().numpy()
+        if depth_np.ndim == 3 and depth_np.shape[0] == 1:
+            depth_np = depth_np[0]
+        return depth_np
+
+    def _save_depth_debug_images(
+        self,
+        endoscope_img: torch.Tensor,
+        depth_orig: np.ndarray | None,
+        depth_new: torch.Tensor,
+        endo_processed: torch.Tensor,
+        depth_processed: torch.Tensor,
+    ) -> None:
+        if self.depth_debug_dir is None or depth_orig is None:
+            return
+        if self.depth_debug_saved >= self.depth_debug_limit:
+            return
+
+        num_to_save = min(
+            depth_orig.shape[0],
+            endoscope_img.shape[0],
+            endo_processed.shape[0],
+            depth_processed.shape[0],
+            self.depth_debug_limit - self.depth_debug_saved,
+        )
+
+        for batch_idx in range(num_to_save):
+            sample_idx = self.depth_debug_saved + batch_idx
+            rgb_img = self._rgb_tensor_to_uint8_image(endoscope_img[batch_idx])
+            depth_orig_rgb = depth2rgb(depth_orig[batch_idx], 0.02, 0.20).astype(np.uint8)
+            depth_new_rgb = depth2rgb(
+                self._depth_tensor_to_numpy(depth_new[batch_idx]), 0.02, 0.20
+            ).astype(np.uint8)
+            original_panel = np.concatenate(
+                [rgb_img, depth_orig_rgb, depth_new_rgb], axis=1
+            )
+            Image.fromarray(original_panel).save(
+                self.depth_debug_dir / "original_vs_depth" / f"sample_{sample_idx:04d}.png"
+            )
+
+            endo_processed_rgb = self._rgb_tensor_to_uint8_image(endo_processed[batch_idx])
+            depth_processed_rgb = depth2rgb(
+                self._depth_tensor_to_numpy(depth_processed[batch_idx]), 0.0, 1.0
+            ).astype(np.uint8)
+            processed_panel = np.concatenate(
+                [endo_processed_rgb, depth_processed_rgb], axis=1
+            )
+            Image.fromarray(processed_panel).save(
+                self.depth_debug_dir / "processed_vs_depth" / f"sample_{sample_idx:04d}.png"
+            )
+
+        self.depth_debug_saved += num_to_save
+
+    def _get_depth(self, img: torch.Tensor):
+        """Given an rgb image, generate the depth map for the image."""
+        depth_new = self.depth_model.infer_tensor(img)
+        depth_orig = None
+
+        if (
+            self.depth_debug_dir is not None
+            and self.depth_debug_saved < self.depth_debug_limit
+        ):
+            num_to_save = min(img.shape[0], self.depth_debug_limit - self.depth_debug_saved)
+            depth_orig = np.stack(
+                [
+                    self.depth_model.infer(
+                        img[idx].detach().cpu().permute(1, 2, 0).numpy()
+                    )
+                    for idx in range(num_to_save)
+                ],
+                axis=0,
+            )
+        return depth_new, depth_orig
+
+    def preprocess_images(
+            self, 
+            endoscope_img: torch.Tensor, 
+            lw_img: torch.Tensor, 
+            rw_img: torch.Tensor
+        ):
+        """Resizes images, gets depth image from endoscope image, and performs
+        image augmentation."""
+
+        depth_img, depth_orig = self._get_depth(endoscope_img)
+
+        def resize_img(img, new_size: List):
+            h_new, w_new = new_size[0], new_size[1]
+            return F.interpolate(
+                img,
+                size=(h_new, w_new),
+                mode="bilinear",        # best for images
+                align_corners=False
+            )
+        
+        endo_processed = resize_img(endoscope_img.float(), self.img_resize_cfg["left"]).clamp(0, 255.0).to(torch.uint8)
+        lw_processed = resize_img(lw_img.float(), self.img_resize_cfg["left_wrist"]).clamp(0, 255.0).to(torch.uint8)
+        rw_processed = resize_img(rw_img.float(), self.img_resize_cfg["right_wrist"]).clamp(0, 255.0).to(torch.uint8)
+
+        # resize, clamp, and normalize depth
+        depth_processed = resize_img(depth_img.float(), self.img_resize_cfg["left"])
+
+        # AUGMENT IMAGES
+        # pass the endo and depth images together to get consistent augmentations
+        # across the two images
+        endo_processed, depth_processed = self.img_aug_dict["endoscope_img"](
+            endo_processed, depth_processed, kinds=["image", "depth"]
+        )
+
+        lw_processed = self.img_aug_dict["lw_img"](lw_processed)
+        rw_processed = self.img_aug_dict["rw_img"](rw_processed)
+
+        # normalize images with imagenet mean/std
+        endo_processed = self.image_normalize(endo_processed / 255.0)
+        lw_processed = self.image_normalize(lw_processed / 255.0)
+        rw_processed = self.image_normalize(rw_processed / 255.0)
+
+        # normalize depth with min/max normalization
+        depth_processed = torch.clamp(depth_processed, min=0.0, max=self.MAX_DEPTH_VAL)
+        depth_processed = depth_processed / self.MAX_DEPTH_VAL
+
+        self._save_depth_debug_images(
+            endoscope_img=endoscope_img,
+            depth_orig=depth_orig,
+            depth_new=depth_img,
+            endo_processed=endo_processed,
+            depth_processed=depth_processed,
+        )
+
+        return {
+            "endoscope_img": endo_processed, 
+            "depth_img": depth_processed, 
+            "lw_img": lw_processed, 
+            "rw_img": rw_processed
+        }
+
 
     def forward(
         self,
-        image,
+        endoscope_img,
+        depth_img,
+        lw_img,
+        rw_img,
         current_pose,
         actions=None,
         is_pad=None,
@@ -307,16 +520,15 @@ class ACTPolicyDepth(DVRKPolicy):
             robot actions.
         """
         env_state = None
-        image, depth_image = self._split_rgb_and_depth(image)
-        image = self.image_normalize(image)
+        endoscope_img = self.image_normalize(endoscope_img)
         depth_image = self.image_normalize(depth_image)
-        batch_size = image.shape[0]
+        batch_size = endoscope_img.shape[0]
         # since the dVRK is so inaccurate in an absolute setting, we set the absolute
         # qpos to zero so that this will not have an impact on the model
         model_qpos = torch.zeros(
-            (batch_size, self.state_dim), dtype=image.dtype, device=image.device
+            (batch_size, self.state_dim), dtype=endoscope_img.dtype, device=endoscope_img.device
         )
-        command_embedding = self._encode_command_text(command_text, image.device)
+        command_embedding = self._encode_command_text(command_text, endoscope_img.device)
 
         if actions is not None:  # training time
             if is_pad is None:
@@ -325,14 +537,14 @@ class ACTPolicyDepth(DVRKPolicy):
             # save these in the model checkpoint
             self._record_training_command_text(command_text)
             processed_actions = self.prepare_actions_for_training(
-                current_pose, actions, is_pad, image.device
+                current_pose, actions, is_pad, endoscope_img.device
             )
             processed_actions = processed_actions[:, : self.num_queries]
             is_pad = is_pad[:, : self.num_queries]
 
             a_hat, is_pad_hat, (mu, logvar) = self.model(
                 model_qpos,
-                image,
+                endoscope_img,
                 env_state,
                 processed_actions,
                 is_pad,
@@ -350,7 +562,7 @@ class ACTPolicyDepth(DVRKPolicy):
         else:  # inference time
             a_hat, _, (_, _) = self.model(
                 model_qpos,
-                image,
+                endoscope_img,
                 env_state,
                 command_embedding=command_embedding,
                 depth_image=depth_image,

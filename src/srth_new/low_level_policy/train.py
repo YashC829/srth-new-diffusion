@@ -80,8 +80,8 @@ def run_policy_step(
     else:
         policy.train()
         for data in dataloader:
-            image_data, current_pose_data, action_data, is_pad, command_text = utils.collect_data(data, device)
-            forward_dict = policy(image_data, current_pose_data, action_data, is_pad, command_text)
+            img_stack, current_pose_data, action_data, is_pad, command_text, endoscope_img_spatial_tf_only = utils.collect_data(data, device)
+            forward_dict = policy(img_stack, current_pose_data, action_data, is_pad, command_text, endoscope_img_spatial_tf_only)
 
             loss = forward_dict["loss"]
             loss.backward()
