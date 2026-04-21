@@ -358,20 +358,19 @@ class ACTPolicy(DVRKPolicy):
             either a tensor of predicted policy actions or a tensor of absolute
             robot actions.
         """
-        endo_img, lw_img, rw_img = self.preprocess_images(
+        endoscope_img, lw_img, rw_img = self.preprocess_images(
             endoscope_img, lw_img, rw_img, use_augmentation=self.training
         )
         # stack the images
-        image = torch.stack([endo_img, lw_img, rw_img], dim=1)
+        rgb_img_stack = torch.stack([endoscope_img, lw_img, rw_img], dim=1)
         env_state = None
-        image = self.image_normalize(image)
-        batch_size = image.shape[0]
+        batch_size = rgb_img_stack.shape[0]
         # since the dVRK is so inaccurate in an absolute setting, we set the absolute
         # qpos to zero so that this will not have an impact on the model
         model_qpos = torch.zeros(
-            (batch_size, self.state_dim), dtype=image.dtype, device=image.device
+            (batch_size, self.state_dim), dtype=rgb_img_stack.dtype, device=rgb_img_stack.device
         )
-        command_embedding = self._encode_command_text(command_text, image.device)
+        command_embedding = self._encode_command_text(command_text, rgb_img_stack.device)
 
         if self.training:
             if actions is None:
@@ -385,14 +384,14 @@ class ACTPolicy(DVRKPolicy):
             # save these in the model checkpoint
             self._record_training_command_text(command_text)
             processed_actions = self.prepare_actions_for_training(
-                current_pose, actions, is_pad, image.device
+                current_pose, actions, is_pad, rgb_img_stack.device
             )
             processed_actions = processed_actions[:, : self.num_queries]
             is_pad = is_pad[:, : self.num_queries]
 
             a_hat, is_pad_hat, (mu, logvar) = self.model(
                 model_qpos,
-                image,
+                rgb_img_stack,
                 env_state,
                 processed_actions,
                 is_pad,
@@ -413,7 +412,7 @@ class ACTPolicy(DVRKPolicy):
                     "Currently, policy is set to inference, but actions provided."
                 )
             a_hat, _, (_, _) = self.model(
-                model_qpos, image, env_state, command_embedding=command_embedding
+                model_qpos, rgb_img_stack, env_state, command_embedding=command_embedding
             )  # no action, sample from prior
             if return_policy_actions:
                 return a_hat
