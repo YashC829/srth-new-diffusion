@@ -2,16 +2,10 @@ from __future__ import annotations
 
 from typing import List, Literal
 
-import albumentations as A
-import cv2
-import numpy as np
-from omegaconf import DictConfig
-import kornia.augmentation as K
+from omegaconf import DictConfig, OmegaConf
 import torch
 from torchvision import transforms
-import torchvision.transforms as T
 from torch.nn import functional as F
-from torch import nn
 
 from srth_new.general.utils.lang_encoding import encode_text, initialize_model_and_tokenizer
 from .dvrk_policy import DVRKPolicy
@@ -150,6 +144,24 @@ class ACTPolicy(DVRKPolicy):
 
         return aug_dict
 
+    @staticmethod
+    def _serialize_img_resize_cfg(img_resize_cfg: DictConfig) -> object:
+        return OmegaConf.to_container(
+            img_resize_cfg,
+            resolve=True,
+            throw_on_missing=True,
+        )
+
+    @staticmethod
+    def _deserialize_img_resize_cfg(serialized_img_resize_cfg: object) -> DictConfig:
+        if isinstance(serialized_img_resize_cfg, DictConfig):
+            return serialized_img_resize_cfg
+
+        restored_cfg = OmegaConf.create(serialized_img_resize_cfg)
+        if not isinstance(restored_cfg, DictConfig):
+            raise TypeError("Checkpoint img_resize_cfg must deserialize to a mapping.")
+        return restored_cfg
+
     def _get_param_dict(self, model, backbone_cfg: DictConfig):
         param_dicts = [
             {
@@ -236,6 +248,7 @@ class ACTPolicy(DVRKPolicy):
             {
                 "use_language": self.use_language,
                 "language_encoder": self.language_encoder,
+                "img_resize_cfg": self._serialize_img_resize_cfg(self.img_resize_cfg),
             }
         )
         return policy_config
@@ -250,11 +263,23 @@ class ACTPolicy(DVRKPolicy):
             model_dict.get("training_text_conditionings", []) # type:ignore
         )
 
+        serialized_img_resize_cfg = model_dict.get("img_resize_cfg")
+        policy_config = model_dict.get("policy_config")
+        if serialized_img_resize_cfg is None and isinstance(
+            policy_config, (dict, DictConfig)
+        ):
+            serialized_img_resize_cfg = policy_config.get("img_resize_cfg")
+        if serialized_img_resize_cfg is not None:
+            self.img_resize_cfg = self._deserialize_img_resize_cfg(
+                serialized_img_resize_cfg
+            )
+
     def preprocess_images(
             self, 
             endoscope_img: torch.Tensor, 
             lw_img: torch.Tensor, 
-            rw_img: torch.Tensor
+            rw_img: torch.Tensor,
+            use_augmentation: bool = False
         ):
         """Resizes images and performs image augmentation."""
 
@@ -274,9 +299,10 @@ class ACTPolicy(DVRKPolicy):
         # AUGMENT IMAGES (input images must be [0, 255] uint8)
         # pass the endo and depth images together to get consistent augmentations
         # across the two images
-        endo_processed = self.img_aug_dict["endoscope_img"](endo_processed)
-        lw_processed = self.img_aug_dict["lw_img"](lw_processed, apply_random_shift=False)
-        rw_processed = self.img_aug_dict["rw_img"](rw_processed, apply_random_shift=False)
+        if use_augmentation:
+            endo_processed = self.img_aug_dict["endoscope_img"](endo_processed)
+            lw_processed = self.img_aug_dict["lw_img"](lw_processed, apply_random_shift=False)
+            rw_processed = self.img_aug_dict["rw_img"](rw_processed, apply_random_shift=False)
         # output in the same dtype as original inputs ([0, 255] uint8)
 
         # Debug show augmented images...
@@ -332,8 +358,9 @@ class ACTPolicy(DVRKPolicy):
             either a tensor of predicted policy actions or a tensor of absolute
             robot actions.
         """
-
-        endo_img, lw_img, rw_img = self.preprocess_images(endoscope_img, lw_img, rw_img)
+        endo_img, lw_img, rw_img = self.preprocess_images(
+            endoscope_img, lw_img, rw_img, use_augmentation=self.training
+        )
         # stack the images
         image = torch.stack([endo_img, lw_img, rw_img], dim=1)
         env_state = None
@@ -346,7 +373,12 @@ class ACTPolicy(DVRKPolicy):
         )
         command_embedding = self._encode_command_text(command_text, image.device)
 
-        if actions is not None:  # training time
+        if self.training:
+            if actions is None:
+                raise Exception(
+                    f"If policy is training, ground truth actions must be provided. "
+                    "Currently, policy is set to train, but no actions provided."
+                )
             if is_pad is None:
                 raise Exception()
             # we keep track of the various commands to send to the robot and
@@ -375,6 +407,11 @@ class ACTPolicy(DVRKPolicy):
             loss_dict["loss"] = loss_dict["l1"] + loss_dict["kl"] * self.kl_weight
             return loss_dict
         else:  # inference time
+            if actions is not None:
+                raise Exception(
+                    f"If policy is running inference, ground truth actions must not be provided. "
+                    "Currently, policy is set to inference, but actions provided."
+                )
             a_hat, _, (_, _) = self.model(
                 model_qpos, image, env_state, command_embedding=command_embedding
             )  # no action, sample from prior
