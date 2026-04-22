@@ -372,12 +372,7 @@ class ACTPolicy(DVRKPolicy):
         )
         command_embedding = self._encode_command_text(command_text, rgb_img_stack.device)
 
-        if self.training:
-            if actions is None:
-                raise Exception(
-                    f"If policy is training, ground truth actions must be provided. "
-                    "Currently, policy is set to train, but no actions provided."
-                )
+        if actions is not None: # training or validation
             if is_pad is None:
                 raise Exception()
             # we keep track of the various commands to send to the robot and
@@ -405,12 +400,7 @@ class ACTPolicy(DVRKPolicy):
             loss_dict["kl"] = total_kld[0]
             loss_dict["loss"] = loss_dict["l1"] + loss_dict["kl"] * self.kl_weight
             return loss_dict
-        else:  # inference time
-            if actions is not None:
-                raise Exception(
-                    f"If policy is running inference, ground truth actions must not be provided. "
-                    "Currently, policy is set to inference, but actions provided."
-                )
+        else:  # pure inference time
             a_hat, _, (_, _) = self.model(
                 model_qpos, rgb_img_stack, env_state, command_embedding=command_embedding
             )  # no action, sample from prior
