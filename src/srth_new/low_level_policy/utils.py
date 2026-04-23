@@ -5,6 +5,8 @@ from collections import Counter
 import math
 from pathlib import Path
 import random
+from typing import List
+from tqdm import tqdm
 
 from hydra.core.hydra_config import HydraConfig
 import numpy as np
@@ -14,9 +16,10 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader, WeightedRandomSampler
 import wandb
 
-from srth_new.general import constants
+from srth_new.general.utils import processing
+from srth_new.general.utils import dataset as general_dataset_utils
 from srth_new.general.utils.processing import compute_diffs, DatasetStats
-from srth_new.low_level_policy.dataset.low_level_dataset_new import EpisodicDatasetDvrkGeneric
+from srth_new.low_level_policy.dataset.low_level_dataset_new_format import EpisodicDatasetDvrkGeneric
 from srth_new.general import constants
 
 import logging
@@ -264,7 +267,14 @@ def restore_hydra_cfg_from_wandb(entity: str, project: str, run_id: str) -> Dict
     restored_path = Path(restored.name)
     return OmegaConf.load(restored_path)
 
-def load_dataset_stats(tissue_sample_ids_train, dataset_dir):
+def load_dataset_stats(
+        dataset_dir: str, 
+        tissue_sample_ids_train: List[int], 
+        phases: DictConfig,
+        action_mode: str
+    ):
+
+    general_dataset_utils.validate_selected_phases(phases)
 
     # we cache dataset stats for quick loading
     with open(constants.DATASET_STATS_CACHE_FILE, "r") as file:
@@ -273,81 +283,129 @@ def load_dataset_stats(tissue_sample_ids_train, dataset_dir):
     # load cached stats, if possible
     for k, info in stats.items():
         if (info["dataset_dir"] == dataset_dir 
-            and info["tissue_sample_ids_train"] == tissue_sample_ids_train):
+            and info["tissue_sample_ids_train"] == tissue_sample_ids_train
+            and info["action_mode"] == action_mode):
             return DatasetStats(
-                np.array(info["mean"]),
-                np.array(info["std"]),
-                np.array(info["min"]),
-                np.array(info["max"]),
+                np.array(info["action_mean"]),
+                np.array(info["action_std"]),
+                np.array(info["action_min"]),
+                np.array(info["action_max"]),
                 info["dataset_dir"],
-                info["tissue_sample_ids_train"]
+                info["tissue_sample_ids_train"],
+                info["action_mode"]
             )
     
     # generate dataset stats
     log.info('Computing dataset statistics. This could take a few minutes...')
-    mean, std, min, max = compute_diffs(tissue_sample_ids_train, dataset_dir)
+
+    temp_train_dataset = EpisodicDatasetDvrkGeneric(dataset_dir, tissue_sample_ids_train, phases)
+    loader = DataLoader(temp_train_dataset, batch_size=12, shuffle=True)
+
+    sum_ = None
+    count = 0
+    sample_count = 0
+
+    # the dataset is random. it selects a random chunk of the trajectory from
+    # each episode in the dataset. therefore, we will define a number of randomly
+    # sampled trajectories and continue to sample from the data loader until the
+    # chosen number of samples are aggregated for the statistics
+    desired_samples = 10000
+    pbar = tqdm(total=desired_samples, desc="Sampling actions")
+
+    while sample_count < desired_samples:
+        for data in loader:
+            _, _, _, current_pose, action_data, is_pad, _ = data
+
+            # the dataset stats will take place in the same action mode representation
+            # as is used by the model. thus, we need to make the conversion here
+            # because the dataset currently does not handle this
+            processed_actions = processing.convert_action_batch_to_relative(
+                current_pose, action_data, is_pad, action_mode
+            )
+
+            valid_mask = ~is_pad
+            valid_actions = processed_actions[valid_mask]  # [K, 16]
+
+            if valid_actions.numel() == 0:
+                continue
+
+            if sum_ is None:
+                dim = valid_actions.shape[-1]
+                device = valid_actions.device
+                dtype = valid_actions.dtype
+
+                sum_ = torch.zeros(dim, device=device, dtype=dtype)
+                sum_sq = torch.zeros(dim, device=device, dtype=dtype)
+                min_ = torch.full((dim,), float("inf"), device=device, dtype=dtype)
+                max_ = torch.full((dim,), float("-inf"), device=device, dtype=dtype)
+
+            sum_ += valid_actions.sum(dim=0)
+            sum_sq += (valid_actions ** 2).sum(dim=0)
+            count += valid_actions.shape[0]
+
+            batch_min = valid_actions.min(dim=0).values
+            batch_max = valid_actions.max(dim=0).values
+
+            min_ = torch.minimum(min_, batch_min)
+            max_ = torch.maximum(max_, batch_max)
+
+            increment = action_data.shape[0]
+            sample_count += increment
+            pbar.update(increment)
+
+            if sample_count >= desired_samples:
+                break
+
+    pbar.close()
+
+    # Final statistics
+    mean = sum_ / count
+    var = sum_sq / count - mean ** 2
+    var = torch.clamp(var, min=0.0)  # numerical stability
+    std = torch.sqrt(var)
 
     # cache stats
     dataset_stats_cache_idx = len(stats.keys()) + 1
     stats[dataset_stats_cache_idx] = {
-        "mean": mean.tolist(), 
-        "std": std.tolist(), 
-        "min": min.tolist(), 
-        "max": max.tolist(), 
+        "action_mean": mean.tolist(), 
+        "action_std": std.tolist(), 
+        "action_min": min_.tolist(), 
+        "action_max": max_.tolist(), 
         "tissue_sample_ids_train": list(tissue_sample_ids_train), 
-        "dataset_dir": dataset_dir
+        "dataset_dir": dataset_dir,
+        "action_mode": action_mode
     }
     with open(constants.DATASET_STATS_CACHE_FILE, "w") as file:
         json.dump(stats, file, indent=3)
 
-    return DatasetStats(mean, std, min, max, dataset_dir, tissue_sample_ids_train)
+    return DatasetStats(mean, std, min_, max_, dataset_dir, tissue_sample_ids_train, action_mode)
 
 
 def load_dataloaders(cfg: DictConfig):
     log.info(f"Loading data from {cfg.dataset_dir}")
-    
-    # obtain train test split
-    train_indices = np.random.permutation(cfg.num_episodes_train)
-    val_indices = np.random.permutation(cfg.num_episodes_val)
-
-    # TODO: All are hardcoded... This is taken from the original code. There are
-    # other hardcoded things that make changing this a bit tedious and nontrivial.
-    # For now, we will just hardcode this here as it works, but if we change any
-    # of the names anywhere or change the data collection naming convention, this
-    # will break. I will define these for now in the general.constants.py file, 
-    # but an overhaul of all naming would be nice for organization purposes.
-    camera_names = constants.LOW_LEVEL_DATASET_CAMERA_NAMES
-    camera_file_suffixes = constants.LOW_LEVEL_DATASET_CAMERA_SUFFIXES
-
-    dataset_stats = load_dataset_stats(cfg.tissue_sample_ids_train, cfg.dataset_dir)
+    dataset_stats = load_dataset_stats(cfg.dataset_dir, cfg.tissue_sample_ids_train, cfg.phases, cfg.action_mode)
 
     train_dataset = EpisodicDatasetDvrkGeneric(
-        train_indices,
-        cfg.tissue_sample_ids_train,
         cfg.dataset_dir,
-        camera_names,
-        camera_file_suffixes,
-        cfg.chunk_size,
-        cfg.use_auto_label
+        cfg.tissue_sample_ids_train,
+        cfg.phases,
+        cfg.chunk_size
     )
 
     val_dataset = EpisodicDatasetDvrkGeneric(
-        val_indices,
-        cfg.tissue_sample_ids_val,
         cfg.dataset_dir,
-        camera_names,
-        camera_file_suffixes,
-        cfg.chunk_size,
-        cfg.use_auto_label
+        cfg.tissue_sample_ids_val,
+        cfg.phases,
+        cfg.chunk_size
     )
 
-    task_labels = train_dataset.sample_task_labels
+    task_labels = train_dataset.ep_counts
     task_counts = Counter(task_labels)
 
     # Compute weights based on task density in dataset distribution
     weights = [1.0 / task_counts[task] for task in task_labels]
 
-    train_sampler = WeightedRandomSampler(weights, num_samples=len(train_indices), replacement=True)
+    train_sampler = WeightedRandomSampler(weights, num_samples=len(train_dataset.episode_dirs), replacement=True)
 
     train_dataloader = DataLoader(
         train_dataset, batch_size=cfg.batch_size, sampler=train_sampler,

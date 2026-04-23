@@ -33,13 +33,18 @@ class DVRKPolicy(nn.Module):
 
     def set_dataset_stats(self, dataset_stats: processing.DatasetStats) -> None:
         """Attach dataset statistics used for action normalization."""
-        self.stats_mean.copy_(torch.as_tensor(dataset_stats.mean, dtype=torch.float32))
-        self.stats_std.copy_(torch.as_tensor(dataset_stats.std, dtype=torch.float32))
-        self.stats_min.copy_(torch.as_tensor(dataset_stats.min, dtype=torch.float32))
-        self.stats_max.copy_(torch.as_tensor(dataset_stats.max, dtype=torch.float32))
+        self.stats_mean.copy_(torch.as_tensor(dataset_stats.action_mean, dtype=torch.float32))
+        self.stats_std.copy_(torch.as_tensor(dataset_stats.action_std, dtype=torch.float32))
+        self.stats_min.copy_(torch.as_tensor(dataset_stats.action_min, dtype=torch.float32))
+        self.stats_max.copy_(torch.as_tensor(dataset_stats.action_max, dtype=torch.float32))
         self.has_dataset_stats.fill_(True)
         self.stats_dataset_dir = dataset_stats.dataset_dir
         self.stats_tissue_sample_ids_train = list(dataset_stats.tissue_sample_ids_train)
+        if dataset_stats.action_mode != self.action_mode:
+            raise Exception(
+                f"Action mode used to collect dataset stats ({dataset_stats.action_mode}) "
+                "is not the same as action mode required by the model ({self.action_mode})"
+            )
 
     def export_dataset_stats(self) -> processing.DatasetStats:
         """Return the currently attached dataset statistics as a dataclass."""
@@ -47,12 +52,13 @@ class DVRKPolicy(nn.Module):
             raise RuntimeError("Dataset statistics have not been set on the policy.")
 
         return processing.DatasetStats(
-            mean=self.stats_mean.detach().cpu().numpy().copy(),
-            std=self.stats_std.detach().cpu().numpy().copy(),
-            min=self.stats_min.detach().cpu().numpy().copy(),
-            max=self.stats_max.detach().cpu().numpy().copy(),
+            action_mean=self.stats_mean.detach().cpu().numpy().copy(),
+            action_std=self.stats_std.detach().cpu().numpy().copy(),
+            action_min=self.stats_min.detach().cpu().numpy().copy(),
+            action_max=self.stats_max.detach().cpu().numpy().copy(),
             dataset_dir=self.stats_dataset_dir,
             tissue_sample_ids_train=list(self.stats_tissue_sample_ids_train or []),
+            action_mode=self.action_mode
         )
 
     def _require_dataset_stats(self) -> None:
@@ -108,143 +114,20 @@ class DVRKPolicy(nn.Module):
 
         return self._preserve_rotation_columns(denormalized, actions)
 
-    def _convert_single_raw_action_sequence_to_policy_actions(
-        self,
-        current_pose: np.ndarray,
-        actions: np.ndarray,
-    ) -> np.ndarray:
-        qpos_psm1 = current_pose[:8]
-        qpos_psm2 = current_pose[8:16]
-        actions_psm1 = actions[:, :8]
-        actions_psm2 = actions[:, 8:16]
-
-        if self.action_mode == "hybrid_relative":
-            diff_psm1 = processing.computer_diff_actions(qpos_psm1, actions_psm1)
-            diff_psm2 = processing.computer_diff_actions(qpos_psm2, actions_psm2)
-        elif self.action_mode == "ego":
-            diff_psm1 = processing.compute_relative_actions_in_SE3(qpos_psm1, actions_psm1)
-            diff_psm2 = processing.compute_relative_actions_in_SE3(qpos_psm2, actions_psm2)
-        elif self.action_mode == "relative_endoscope":
-            diff_psm1 = processing.compute_diff_actions_relative_endoscope(
-                qpos_psm1,
-                actions_psm1,
-            )
-            diff_psm2 = processing.compute_diff_actions_relative_endoscope(
-                qpos_psm2,
-                actions_psm2,
-            )
-        else:
-            raise NotImplementedError(f"Unsupported action mode: {self.action_mode}")
-
-        return np.column_stack((diff_psm1, diff_psm2)).astype(np.float32)
-
     def prepare_actions_for_training(
         self,
         current_pose: torch.Tensor,
         actions: torch.Tensor,
-        is_pad: torch.Tensor,
-        device: torch.device,
+        is_pad: torch.Tensor
     ) -> torch.Tensor:
         """Convert absolute dataset actions into normalized policy targets."""
-        if current_pose.dim() == 1:
-            current_pose = current_pose.unsqueeze(0)
-        if actions.dim() == 2:
-            actions = actions.unsqueeze(0)
-        if is_pad.dim() == 1:
-            is_pad = is_pad.unsqueeze(0)
-
-        current_pose_np = current_pose.detach().cpu().numpy()
-        actions_np = actions.detach().cpu().numpy()
-        is_pad_np = is_pad.detach().cpu().numpy().astype(bool)
-
-        policy_actions_np = np.zeros(
-            (actions_np.shape[0], actions_np.shape[1], self.action_dim),
-            dtype=np.float32,
+        policy_actions = processing.convert_action_batch_to_relative(
+            current_pose, actions, is_pad, self.action_mode
         )
-        for batch_idx, (pose, action, pad_mask) in enumerate(
-            zip(current_pose_np, actions_np, is_pad_np)
-        ):
-            valid_mask = ~pad_mask
-            if not np.any(valid_mask):
-                continue
-
-            valid_actions = action[valid_mask]
-            converted_actions = self._convert_single_raw_action_sequence_to_policy_actions(
-                pose,
-                valid_actions,
-            )
-            policy_actions_np[batch_idx, valid_mask] = converted_actions
-
-        policy_actions = torch.from_numpy(policy_actions_np).to(
-            device=device,
-            dtype=torch.float32,
-        )
+        policy_actions = policy_actions.to(actions.device)
         policy_actions = self.normalize_actions(policy_actions)
         policy_actions = policy_actions.masked_fill(is_pad.unsqueeze(-1), 0.0)
         return policy_actions
-
-    def _convert_single_policy_actions_to_absolute(
-        self,
-        current_pose: np.ndarray,
-        actions: np.ndarray,
-    ) -> np.ndarray:
-        qpos_psm1 = current_pose[:8]
-        qpos_psm2 = current_pose[8:16]
-        chunk_size = actions.shape[0]
-
-        if self.action_mode == "hybrid_relative":
-            actions_psm1 = np.zeros((chunk_size, 8), dtype=np.float32)
-            actions_psm1[:, 0:3] = qpos_psm1[0:3] + actions[:, 0:3]
-            actions_psm1 = processing.convert_delta_6d_to_taskspace_quat(
-                actions[:, 0:10],
-                actions_psm1,
-                qpos_psm1.copy(),
-            )
-            actions_psm1[:, 7] = np.clip(actions[:, 9], -0.698, 0.698)
-
-            actions_psm2 = np.zeros((chunk_size, 8), dtype=np.float32)
-            actions_psm2[:, 0:3] = qpos_psm2[0:3] + actions[:, 10:13]
-            actions_psm2 = processing.convert_delta_6d_to_taskspace_quat(
-                actions[:, 10:20],
-                actions_psm2,
-                qpos_psm2.copy(),
-            )
-            actions_psm2[:, 7] = np.clip(actions[:, 19], -0.698, 0.698)
-        elif self.action_mode == "relative_endoscope":
-            actions_psm1 = np.zeros((chunk_size, 8), dtype=np.float32)
-            actions_psm1[:, 0:3] = qpos_psm1[0:3] + actions[:, 0:3]
-            actions_psm1 = processing.convert_delta_6d_to_taskspace_quat_relative_endo(
-                actions[:, 0:10],
-                actions_psm1,
-                qpos_psm1.copy(),
-            )
-            actions_psm1[:, 7] = np.clip(actions[:, 9], -0.698, 0.698)
-
-            actions_psm2 = np.zeros((chunk_size, 8), dtype=np.float32)
-            actions_psm2[:, 0:3] = qpos_psm2[0:3] + actions[:, 10:13]
-            actions_psm2 = processing.convert_delta_6d_to_taskspace_quat_relative_endo(
-                actions[:, 10:20],
-                actions_psm2,
-                qpos_psm2.copy(),
-            )
-            actions_psm2[:, 7] = np.clip(actions[:, 19], -0.698, 0.698)
-        elif self.action_mode == "ego":
-            actions_psm1 = processing.convert_actions_to_SE3_then_final_actions(
-                actions[:, 0:3],
-                processing.convert_6d_rot_to_quat(actions[:, 3:9]),
-                qpos_psm1.copy(),
-                actions[:, 9],
-            )
-            actions_psm2 = processing.convert_actions_to_SE3_then_final_actions(
-                actions[:, 10:13],
-                processing.convert_6d_rot_to_quat(actions[:, 13:19]),
-                qpos_psm2.copy(),
-                actions[:, 19],
-            )
-        else:
-            raise NotImplementedError(f"Unsupported action mode: {self.action_mode}")
-
-        return np.column_stack((actions_psm1, actions_psm2)).astype(np.float32)
 
     def postprocess_actions(
         self,
@@ -265,7 +148,7 @@ class DVRKPolicy(nn.Module):
 
         absolute_actions_np = np.stack(
             [
-                self._convert_single_policy_actions_to_absolute(pose, action)
+                processing.convert_single_policy_actions_to_absolute(pose, action, self.action_mode)
                 for pose, action in zip(current_pose_np, denormalized_actions_np)
             ],
             axis=0,

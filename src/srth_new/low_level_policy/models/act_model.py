@@ -373,13 +373,14 @@ class ACTPolicy(DVRKPolicy):
         command_embedding = self._encode_command_text(command_text, rgb_img_stack.device)
 
         if actions is not None: # training or validation
+            actions = actions.to(rgb_img_stack.device)
             if is_pad is None:
                 raise Exception()
             # we keep track of the various commands to send to the robot and
             # save these in the model checkpoint
             self._record_training_command_text(command_text)
             processed_actions = self.prepare_actions_for_training(
-                current_pose, actions, is_pad, rgb_img_stack.device
+                current_pose, actions, is_pad
             )
             processed_actions = processed_actions[:, : self.num_queries]
             is_pad = is_pad[:, : self.num_queries]

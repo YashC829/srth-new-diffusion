@@ -31,7 +31,7 @@ class EpisodicDatasetDvrkGeneric(torch.utils.data.Dataset):
 
         super(EpisodicDatasetDvrkGeneric).__init__()
         dataset.validate_selected_phases(phases)
-        self.episode_dirs, ep_info = dataset.get_episode_directories(
+        self.episode_dirs, self.ep_counts = dataset.get_episode_directories(
             dataset_dir, tissue_sample_ids, phases
         )
         random.shuffle(self.episode_dirs)
@@ -49,7 +49,7 @@ class EpisodicDatasetDvrkGeneric(torch.utils.data.Dataset):
 
         log.info("\n")
         log.info("-"*100)
-        log.info("Dataset Episode Information:\n%s", json.dumps(ep_info, indent=2))
+        log.info("Dataset Episode Information:\n%s", json.dumps(self.ep_counts, indent=2))
         log.info("-"*100 + "\n")
 
     def load_camera_specific_csv(self, csv_path):

@@ -9,6 +9,7 @@ from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig
 from torch.optim.lr_scheduler import LambdaLR
 import wandb
+from tqdm import tqdm
 
 from srth_new.low_level_policy import utils
 
@@ -79,7 +80,7 @@ def run_policy_step(
     # Training Step
     else:
         policy.train()
-        for data in dataloader:
+        for data in tqdm(dataloader):
             endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text = utils.collect_data(data, device)
             forward_dict = policy(endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text)
 

@@ -36,10 +36,10 @@ def validate_selected_phases(phases: DictConfig) -> None:
         for low_level_phase in low_level_phase_list:
             if low_level_phase not in valid_low_level_phase_set:
                 raise Exception(
-                    "High level phase {phase} not found in list of valid high level phases: "
+                    f"Low level phase {low_level_phase} not found in list of valid low level phases: "
                     f"{', '.join(list(valid_low_level_phase_set))}"
                 )
-            
+
 def get_episode_directories(
         dataset_dir: str, tissue_ids: List[int], phases: DictConfig
     ) -> Tuple[List[str], Dict[str, int]]:

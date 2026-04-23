@@ -22,12 +22,151 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class DatasetStats:
-    mean: np.ndarray
-    std: np.ndarray
-    min: np.ndarray
-    max: np.ndarray
+    action_mean: np.ndarray
+    action_std: np.ndarray
+    action_min: np.ndarray
+    action_max: np.ndarray
     dataset_dir: str
     tissue_sample_ids_train: List[int]
+    action_mode: str
+
+def convert_action_batch_to_relative(
+    current_pose: torch.Tensor,
+    actions: torch.Tensor,
+    is_pad: torch.Tensor,
+    action_mode: str
+):
+    if current_pose.dim() == 1:
+        current_pose = current_pose.unsqueeze(0)
+    if actions.dim() == 2:
+        actions = actions.unsqueeze(0)
+    if is_pad.dim() == 1:
+        is_pad = is_pad.unsqueeze(0)
+
+    current_pose_np = current_pose.detach().cpu().numpy()
+    actions_np = actions.detach().cpu().numpy()
+    is_pad_np = is_pad.detach().cpu().numpy().astype(bool)
+
+    policy_actions_np = None
+    for batch_idx, (pose, action, pad_mask) in enumerate(
+        zip(current_pose_np, actions_np, is_pad_np)
+    ):
+        valid_mask = ~pad_mask
+        if not np.any(valid_mask):
+            continue
+
+        valid_actions = action[valid_mask]
+        converted_actions = convert_single_raw_action_sequence_to_policy_actions(
+            pose,
+            valid_actions,
+            action_mode
+        )
+        if policy_actions_np is None:
+            policy_actions_np = np.zeros(
+                (actions_np.shape[0], actions_np.shape[1], converted_actions.shape[-1]),
+                dtype=np.float32,
+            )
+        policy_actions_np[batch_idx, valid_mask] = converted_actions
+
+    policy_actions = torch.from_numpy(policy_actions_np).to(
+        device=actions.device,  # send to original device
+        dtype=torch.float32,
+    )
+
+    return policy_actions
+
+def convert_single_policy_actions_to_absolute(
+    current_pose: np.ndarray,
+    actions: np.ndarray,
+    action_mode: str
+) -> np.ndarray:
+    qpos_psm1 = current_pose[:8]
+    qpos_psm2 = current_pose[8:16]
+    chunk_size = actions.shape[0]
+
+    if action_mode == "hybrid_relative":
+        actions_psm1 = np.zeros((chunk_size, 8), dtype=np.float32)
+        actions_psm1[:, 0:3] = qpos_psm1[0:3] + actions[:, 0:3]
+        actions_psm1 = convert_delta_6d_to_taskspace_quat(
+            actions[:, 0:10],
+            actions_psm1,
+            qpos_psm1.copy(),
+        )
+        actions_psm1[:, 7] = np.clip(actions[:, 9], -0.698, 0.698)
+
+        actions_psm2 = np.zeros((chunk_size, 8), dtype=np.float32)
+        actions_psm2[:, 0:3] = qpos_psm2[0:3] + actions[:, 10:13]
+        actions_psm2 = convert_delta_6d_to_taskspace_quat(
+            actions[:, 10:20],
+            actions_psm2,
+            qpos_psm2.copy(),
+        )
+        actions_psm2[:, 7] = np.clip(actions[:, 19], -0.698, 0.698)
+    elif action_mode == "relative_endoscope":
+        actions_psm1 = np.zeros((chunk_size, 8), dtype=np.float32)
+        actions_psm1[:, 0:3] = qpos_psm1[0:3] + actions[:, 0:3]
+        actions_psm1 = convert_delta_6d_to_taskspace_quat_relative_endo(
+            actions[:, 0:10],
+            actions_psm1,
+            qpos_psm1.copy(),
+        )
+        actions_psm1[:, 7] = np.clip(actions[:, 9], -0.698, 0.698)
+
+        actions_psm2 = np.zeros((chunk_size, 8), dtype=np.float32)
+        actions_psm2[:, 0:3] = qpos_psm2[0:3] + actions[:, 10:13]
+        actions_psm2 = convert_delta_6d_to_taskspace_quat_relative_endo(
+            actions[:, 10:20],
+            actions_psm2,
+            qpos_psm2.copy(),
+        )
+        actions_psm2[:, 7] = np.clip(actions[:, 19], -0.698, 0.698)
+    elif action_mode == "ego":
+        actions_psm1 = convert_actions_to_SE3_then_final_actions(
+            actions[:, 0:3],
+            convert_6d_rot_to_quat(actions[:, 3:9]),
+            qpos_psm1.copy(),
+            actions[:, 9],
+        )
+        actions_psm2 = convert_actions_to_SE3_then_final_actions(
+            actions[:, 10:13],
+            convert_6d_rot_to_quat(actions[:, 13:19]),
+            qpos_psm2.copy(),
+            actions[:, 19],
+        )
+    else:
+        raise NotImplementedError(f"Unsupported action mode: {action_mode}")
+
+    return np.column_stack((actions_psm1, actions_psm2)).astype(np.float32)
+
+def convert_single_raw_action_sequence_to_policy_actions(
+        current_pose: np.ndarray,
+        actions: np.ndarray,
+        action_mode: str
+    ) -> np.ndarray:
+        qpos_psm1 = current_pose[:8]
+        qpos_psm2 = current_pose[8:16]
+        actions_psm1 = actions[:, :8]
+        actions_psm2 = actions[:, 8:16]
+
+        if action_mode == "hybrid_relative":
+            diff_psm1 = computer_diff_actions(qpos_psm1, actions_psm1)
+            diff_psm2 = computer_diff_actions(qpos_psm2, actions_psm2)
+        elif action_mode == "ego":
+            diff_psm1 = compute_relative_actions_in_SE3(qpos_psm1, actions_psm1)
+            diff_psm2 = compute_relative_actions_in_SE3(qpos_psm2, actions_psm2)
+        elif action_mode == "relative_endoscope":
+            diff_psm1 = compute_diff_actions_relative_endoscope(
+                qpos_psm1,
+                actions_psm1,
+            )
+            diff_psm2 = compute_diff_actions_relative_endoscope(
+                qpos_psm2,
+                actions_psm2,
+            )
+        else:
+            raise NotImplementedError(f"Unsupported action mode: {action_mode}")
+
+        return np.column_stack((diff_psm1, diff_psm2)).astype(np.float32)
 
 def convert_6d_rot_to_quat(rots: NDArray[np.float64]) -> NDArray[np.float64]:
     """
