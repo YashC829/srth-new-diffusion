@@ -1,0 +1,15 @@
+dataset_dir: /srv/shared_data/Cholecystectomy_processed/Cholecystectomy
+# Root directory containing the low-level training episodes.
+
+num_episodes_train: 100      # Number of training episodes to sample from the listed tissues.
+tissue_sample_ids_train: [1] # Tissue/sample IDs used to build the training split.
+
+num_episodes_val: 28         # Number of validation episodes to sample.
+tissue_sample_ids_val: [2]   # Tissue/sample IDs reserved for validation.
+
+chunk_size: 60                    # Number of action timesteps predicted per sample.
+
+use_auto_label: false             # Reserved flag for auto-label behavior; currently unclear / experimental.
+
+batch_size: 12                    # Batch size for both train and validation dataloaders.
+num_workers: 16                   # DataLoader worker processes.

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Any, List
 
+from omegaconf import DictConfig
 import numpy as np
 import pandas as pd
 import torch
@@ -13,6 +14,9 @@ from pytransform3d import rotations, batch_rotations, transformations, trajector
 from scipy.spatial.transform import Rotation as R
 from sklearn.preprocessing import normalize
 from tqdm import tqdm
+
+from srth_new.general import constants
+from srth_new.general.utils.dataset import validate_selected_phases
 
 log = logging.getLogger(__name__)
 
@@ -420,6 +424,110 @@ def compute_diff_actions_wrt_camera(
     diff[:, 9] = action[:, -1]  # fill in the jaw angle (note: jaw angle is not relative)
     return diff
 
+def compute_diffs_new(
+    ids: List[int],
+    phases: DictConfig,
+    data_dir: Path | str,
+    chunk_size: int = 100,
+    action_mode: str = "hybrid_relative",
+) -> tuple[
+    NDArray[np.float64],
+    NDArray[np.float64],
+    NDArray[np.float64],
+    NDArray[np.float64],
+]:
+    """
+    Compute dataset-wide action normalization statistics from demonstration CSVs.
+
+    Args:
+        ids: Tissue or phantom identifiers to scan under ``data_dir``.
+        data_dir: Root directory containing ``tissue_*`` or ``phantom_*``
+            subdirectories.
+        chunk_size: Number of future setpoint rows to include for each current
+            pose when building action-difference chunks.
+        phantoms: If ``True``, read from ``phantom_*`` directories; otherwise
+            read from ``tissue_*`` directories.
+
+    Returns:
+        A 4-tuple ``(mean, std, min, max)`` where each element is a NumPy array
+        of per-dimension statistics computed over the stacked relative-action
+        dataset.
+    """
+    
+    validate_selected_phases(phases)
+
+    cp_psm1 = [
+        "psm1_pose.position.x", "psm1_pose.position.y", "psm1_pose.position.z",
+        "psm1_pose.orientation.x", "psm1_pose.orientation.y", "psm1_pose.orientation.z", "psm1_pose.orientation.w",
+        "psm1_jaw",
+    ]
+
+    sp_psm1 = [
+        "psm1_sp.position.x", "psm1_sp.position.y", "psm1_sp.position.z",
+        "psm1_sp.orientation.x", "psm1_sp.orientation.y", "psm1_sp.orientation.z", "psm1_sp.orientation.w",
+        "psm1_jaw_sp",
+    ]
+
+    cp_psm2 = [
+        "psm2_pose.position.x", "psm2_pose.position.y", "psm2_pose.position.z",
+        "psm2_pose.orientation.x", "psm2_pose.orientation.y", "psm2_pose.orientation.z", "psm2_pose.orientation.w",
+        "psm2_jaw",
+    ]
+
+    sp_psm2 = [
+        "psm2_sp.position.x", "psm2_sp.position.y", "psm2_sp.position.z",
+        "psm2_sp.orientation.x", "psm2_sp.orientation.y", "psm2_sp.orientation.z", "psm2_sp.orientation.w",
+        "psm2_jaw_sp",
+    ]
+
+    t = 0
+    samples = {}
+
+    for id in ids:
+        samples[id] = {}
+        tissue_dir = os.path.join(data_dir, f"tissue_{id}")
+
+        # Check if tissue directory exists
+        if not os.path.exists(tissue_dir):
+            raise Exception(f"Tissue directory does not exist: {tissue_dir}")
+        
+        episode_dirs = list()
+        for high_level_phase, low_level_phase_list in phases.items():
+            high_level_phase_dir = os.path.join(tissue_dir, str(high_level_phase))
+            # skip high level phase if no directory found in dataset. this just
+            # means that high level phase wasn't collected for that tissue
+            if not os.path.exists(high_level_phase_dir):
+                continue
+            for low_level_phase in low_level_phase_list:
+                low_level_phase_dir = os.path.join(high_level_phase_dir, str(low_level_phase))
+                # skip low level phase if no directory found in dataset. this just
+                # means that low level phase wasn't collected for that tissue
+                if not os.path.exists(low_level_phase_dir):
+                    continue
+                
+                # add to list of episode directories
+                episode_dirs.extend(os.listdir(low_level_phase_dir))
+
+        diffs = []
+        for episode_dir in episode_dirs:
+            csv_file_path = os.path.join(episode_dir, constants.EPISODE_CSV_FILENAME)
+            csv = pd.read_csv(csv_file_path)
+
+            for jj in range(len(csv)):
+                first_el_psm1 = csv[cp_psm1].iloc[jj, :].to_numpy()
+                chunk_el_psm1 = csv[sp_psm1].iloc[jj:jj + chunk_size, :].to_numpy()
+                # diff_psm1 = computer_diff_actions(first_el_psm1, chunk_el_psm1)
+                diff_psm1 = compute_relative_actions_in_SE3(first_el_psm1, chunk_el_psm1)
+
+                first_el_psm2 = csv[cp_psm2].iloc[jj, :].to_numpy()
+                chunk_el_psm2 = csv[sp_psm2].iloc[jj:jj + chunk_size, :].to_numpy()
+                diff_psm2 = computer_diff_actions(first_el_psm2, chunk_el_psm2)
+
+                diff_psm2 = compute_relative_actions_in_SE3(first_el_psm2, chunk_el_psm2)
+
+                diff_stacked = np.column_stack((diff_psm1, diff_psm2))
+                diffs.append(diff_stacked)
+
 def compute_diffs(
     ids: List[int],
     data_dir: Path | str,
@@ -575,7 +683,6 @@ def compute_diffs(
                     if not os.path.exists(pth):
                         log.info("Warning: CSV file %s does not exist, skipping...", pth)
                         continue
-
                     # Check if path is actually a file (not a directory)
                     if not os.path.isfile(pth):
                         log.info("Warning: %s is not a file, skipping...", pth)

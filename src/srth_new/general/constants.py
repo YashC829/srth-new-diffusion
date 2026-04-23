@@ -3,10 +3,85 @@ import json
 import os
 from pathlib import Path
 
+# the below maps valid high level phases to sets of corresponding valid low
+# level phases
+PHASES = {
+    "unzipping": {
+        "1_grabbing_gallbladder_right",
+        "1_grabbing_gallbladder_right_recovery",
+        "2_initial_incision",
+        "2_initial_incision_recovery",
+        "3_hook_to_local_home",
+        "4_hook_tissue",
+        "4_hook_tissue_recovery",
+        "5_cauterize_tissue_right",
+        "6_hook_to_global_home",
+        "7_grasper_to_home",
+        "8_grabbing_gallbladder_left",
+        "8_grabbing_gallbladder_left_recovery",
+        "9_returning_to_initial_incision",
+        "9_returning_to_initial_incision_recovery",
+        "10_cauterize_tissue_left",
+        "11_regrab",
+        "12_hook_to_global_home",
+        "13_grasper_to_home"
+    },
+    "calot_dissection": {
+        "1_grabbing_gallbladder_right",
+        "1_grabbing_gallbladder_right_recovery",
+        "2_move_camera_down",
+        "3_forceps_approach",
+        "3_forceps_approach_recovery",
+        "4_forceps_open"
+    },
+    "clipping_and_cutting": {
+        "1_grabbing_gallbladder",
+        "1_grabbing_gallbladder_recovery",
+        "2_clipping_first_clip_left_tube",
+        "2_clipping_first_clip_left_tube_recovery",
+        "3_going_back_first_clip_left_tube",
+        "4_clipping_second_clip_left_tube",
+        "4_clipping_second_clip_left_tube_recovery",
+        "5_going_back_second_clip_left_tube",
+        "6_clipping_third_clip_left_tube",
+        "6_clipping_third_clip_left_tube_recovery",
+        "7_going_back_third_clip_left_tube",
+        "8_go_to_the_cutting_position_left_tube",
+        "8_go_to_the_cutting_position_left_tube_recovery",
+        "9_go_back_from_the_cut_left_tube",
+        "10_clipping_first_clip_right_tube",
+        "10_clipping_first_clip_right_tube_recovery",
+        "11_going_back_first_clip_right_tube",
+        "12_clipping_second_clip_right_tube",
+        "12_clipping_second_clip_right_tube_recovery",
+        "13_going_back_second_clip_right_tube",
+        "14_clipping_third_clip_right_tube",
+        "14_clipping_third_clip_right_tube_recovery",
+        "15_going_back_third_clip_right_tube",
+        "16_go_to_the_cutting_position_right_tube",
+        "16_go_to_the_cutting_position_right_tube_recovery",
+        "17_go_back_from_the_cut_right_tube",
+    },
+    "gallbladder_removal": {
+        "1_grabbing_gallbladder_bottom_up",
+        "1_grabbing_gallbladder_bottom_up_recovery",
+        "2_hook_tissue",
+        "2_hook_tissue_recovery",
+        "3_pull_and_burn",
+        "4_pull_up",
+        "5_zoom_out"
+    }
+}
+
+EPISODE_CSV_FILENAME = "ee_csv.csv"
+
+THIRD_PERSON_CAM_NAME = "left"
 THIRD_PERSON_CAM_DIR_NAME = "left_img_dir"
 THIRD_PERSON_CAM_IMG_SUFFIX = "left"
+PSM2_WRIST_CAM_NAME = "psm2"
 PSM2_WRIST_CAM_DIR_NAME = "endo_psm2"
 PSM2_WRIST_CAM_IMG_SUFFIX = "psm2"
+PSM1_WRIST_CAM_NAME = "psm1"
 PSM1_WRIST_CAM_DIR_NAME = "endo_psm1"
 PSM1_WRIST_CAM_IMG_SUFFIX = "psm1"
 
@@ -17,6 +92,31 @@ CAMERA_NAMES = [THIRD_PERSON_CAM_DIR_NAME, PSM1_WRIST_CAM_DIR_NAME, PSM2_WRIST_C
 IMG_RESIZE_SIZE = (224, 224)
 
 TISSUE_FOLDER_NAME = lambda i: f"tissue_{i}"
+
+HEADER_NAME_QPOS_PSM1 = ["psm1_pose.position.x", "psm1_pose.position.y", "psm1_pose.position.z",
+                        "psm1_pose.orientation.x", "psm1_pose.orientation.y", "psm1_pose.orientation.z", "psm1_pose.orientation.w",
+                        "psm1_jaw"]
+
+HEADER_NAME_QPOS_PSM2 = ["psm2_pose.position.x", "psm2_pose.position.y", "psm2_pose.position.z",
+                        "psm2_pose.orientation.x", "psm2_pose.orientation.y", "psm2_pose.orientation.z", "psm2_pose.orientation.w",
+                        "psm2_jaw"]
+
+HEADER_NAME_ACTIONS_PSM1 = ["psm1_sp.position.x", "psm1_sp.position.y", "psm1_sp.position.z",
+                            "psm1_sp.orientation.x", "psm1_sp.orientation.y", "psm1_sp.orientation.z", "psm1_sp.orientation.w",
+                            "psm1_jaw_sp"]
+
+HEADER_NAME_ACTIONS_PSM2 = ["psm2_sp.position.x", "psm2_sp.position.y", "psm2_sp.position.z",
+                            "psm2_sp.orientation.x", "psm2_sp.orientation.y", "psm2_sp.orientation.z", "psm2_sp.orientation.w",
+                            "psm2_jaw_sp"]
+
+HEADER_ECM = ["ecm_pose.position.x", "ecm_pose.position.y", "ecm_pose.position.z",
+                    "ecm_pose.orientation.x", "ecm_pose.orientation.y", 
+                    "ecm_pose.orientation.z", "ecm_pose.orientation.w"]
+
+QUAT_CP_PSM1 = ["psm1_pose.orientation.x", "psm1_pose.orientation.y", "psm1_pose.orientation.z", "psm1_pose.orientation.w"]
+QUAT_CP_PSM2 = ["psm2_pose.orientation.x", "psm2_pose.orientation.y", "psm2_pose.orientation.z", "psm2_pose.orientation.w"]
+
+
 
 # dataset statistics caching
 spec = importlib.util.find_spec("srth_new")
