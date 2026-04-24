@@ -17,14 +17,14 @@ phases:
         - 3_hook_to_local_home
         - 4_hook_tissue
         - 4_hook_tissue_recovery
-        - 5_cauterize_tissue_right
-        - 6_hook_to_global_home
-        - 7_grasper_to_home
-        - 8_grabbing_gallbladder_left
-        - 8_grabbing_gallbladder_left_recovery
-        - 9_returning_to_initial_incision
-        - 9_returning_to_initial_incision_recovery
-        - 10_cauterize_tissue_left
-        - 11_regrab
-        - 12_hook_to_global_home
-        - 13_grasper_to_home
+        # - 5_cauterize_tissue_right
+        # - 6_hook_to_global_home
+        # - 7_grasper_to_home
+        # - 8_grabbing_gallbladder_left
+        # - 8_grabbing_gallbladder_left_recovery
+        # - 9_returning_to_initial_incision
+        # - 9_returning_to_initial_incision_recovery
+        # - 10_cauterize_tissue_left
+        # - 11_regrab
+        # - 12_hook_to_global_home
+        # - 13_grasper_to_home

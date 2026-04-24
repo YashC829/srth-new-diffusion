@@ -399,11 +399,15 @@ def load_dataloaders(cfg: DictConfig):
         cfg.chunk_size
     )
 
-    task_labels = train_dataset.ep_counts
+    task_labels = [
+        f"{Path(ep).parts[-3]}-{Path(ep).parts[-2]}"
+        for ep in train_dataset.episode_dirs
+    ]
     task_counts = Counter(task_labels)
 
     # Compute weights based on task density in dataset distribution
     weights = [1.0 / task_counts[task] for task in task_labels]
+    assert len(weights) == len(train_dataset)
 
     train_sampler = WeightedRandomSampler(weights, num_samples=len(train_dataset.episode_dirs), replacement=True)
 

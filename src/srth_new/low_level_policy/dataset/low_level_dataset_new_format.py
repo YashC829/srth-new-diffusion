@@ -88,7 +88,7 @@ class EpisodicDatasetDvrkGeneric(torch.utils.data.Dataset):
         return camera_csvs
 
     def _get_low_level_phase_from_csv_path(self, csv_path: str) -> str:
-        return Path(csv_path).parts[-3].split("_")[-1]
+        return " ".join(Path(csv_path).parts[-3].split("_")[1:])
 
     def __len__(self):     
         return len(self.episode_dirs)
