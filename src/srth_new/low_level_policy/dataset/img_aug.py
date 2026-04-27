@@ -1,271 +1,462 @@
+import random
+from pathlib import Path
+from typing import Optional, Tuple, Union, Sequence
+
 import numpy as np
 import torch
-import os
+import torch.nn as nn
+import torch.nn.functional as F
+import kornia as K
+import kornia.augmentation as KA
+from PIL import Image
 
-import cv2
-import torchvision.transforms as T
-import albumentations as A
+TensorOrNone = Optional[torch.Tensor]
 
-import json
+from matplotlib import colormaps as cm
+import numpy as np
+def depth2rgb(x: np.ndarray, dmin: float, dmax: float) -> np.ndarray:
+    cmap = cm.get_cmap("Spectral")
+    x = (np.clip(x, dmin, dmax) - dmin) / (dmax - dmin)
+    x = (x * 255).astype(np.uint8)
+    return (cmap(x) * 255)[..., :3]
 
-import IPython
-import IPython
-e = IPython.embed 
+class ImageAug(nn.Module):
+    """
+    Post-dataloader batch augmentation for a variable number of aligned tensors.
 
-class DataAug(object):
-    def __init__(self, img_hw, use_history, stereo=False, mask_prob=0.07, mask_sketch_prob=0.5, dataset_dir=None, wrist_config=None):
-        self.img_hw = img_hw  # (H, W)
-        self.ratio = 0.95
-        self.mask_prob = mask_prob
-        self.use_history = use_history
-        self.stereo = stereo
-        self.mask_sketch_prob = mask_sketch_prob
-        self.dataset_dir = dataset_dir
-        
-        # Store task-level wrist calibration config as fallback
-        # Can be passed directly or will be None (backward compatible)
-        self.task_wrist_config = wrist_config
-        if wrist_config is not None:
-            print(f"Loaded task-level wrist calibration config with keys: {list(wrist_config.keys())}")
+    Each input tensor must have shape:
+        (B, C, H, W)
 
-        # Spatial transforms (crop, resize, rotation), synced across 'left' and 'mask'
-        self.spatial_transforms = A.Compose([
-            A.RandomCrop(height=int(img_hw[0] * self.ratio), width=int(img_hw[1] * self.ratio)),
-            A.Resize(height=img_hw[0], width=img_hw[1]),
-            A.Rotate(limit=5, border_mode=cv2.BORDER_REFLECT_101),
-        ], additional_targets={'mask': 'image'})
+    Key idea:
+    - Augmentation parameters are sampled ONCE per batch element.
+    - The same spatial transforms and dropout mask are applied to every input tensor.
+    - Color jitter is only applied to tensors marked as 'image'.
 
-        # Color jitter (only for RGB)
-        self.color_jitter = T.ColorJitter(brightness=0.2, contrast=0.4, saturation=0.5, hue=0.08)
+    Example:
+        rgb_aug, depth_aug, mask_aug = aug(
+            rgb, depth, mask,
+            kinds=["image", "depth", "mask"]
+        )
 
-        # Albumentations for pixel dropout
-        min_height = max(1, img_hw[0] // 40)
-        min_width = max(1, img_hw[1] // 40)
-        max_height = min(img_hw[0] // 30, img_hw[0])
-        max_width = min(img_hw[1] // 30, img_hw[1])
+    Supported kinds:
+        - "image": bilinear interpolation + color jitter eligible;
+                   expected as uint8 in [0, 255]
+        - "depth": bilinear interpolation + no color jitter
+        - "mask": nearest interpolation + no color jitter
+    """
 
-        self.pixel_dropout = A.Compose([
-            A.CoarseDropout(max_holes=128, max_height=max_height, max_width=max_width,
-                            min_holes=1, min_height=min_height, min_width=min_width,
-                            fill_value=0, p=0.8),
-        ], additional_targets={'mask': 'image'})
-    
-    def load_episode_wrist_rotation(self, episode_path, phase_config=None):
+    def __init__(
+        self,
+        crop_ratio: float = 0.95,
+        rotate_deg: float = 5.0,
+        brightness: float = 0.2,
+        contrast: float = 0.4,
+        saturation: float = 0.5,
+        hue: float = 0.08,
+        max_holes: int = 128,
+        min_holes: int = 1,
+        pixel_dropout_p: float = 0.8,
+        max_shift_x_ratio: float = 0.2,
+        max_shift_y_ratio: float = 0.2,
+        debug_save_dir: str | None = None,
+        debug_name: str = "image_aug",
+        debug_max_calls: int = 0,
+        debug_max_samples: int = 4,
+    ):
+        super().__init__()
+
+        self.crop_ratio = crop_ratio
+        self.rotate_deg = rotate_deg
+
+        self.max_holes = max_holes
+        self.min_holes = min_holes
+        self.pixel_dropout_p = pixel_dropout_p
+
+        self.max_shift_x_ratio = max_shift_x_ratio
+        self.max_shift_y_ratio = max_shift_y_ratio
+        self.debug_save_dir = Path(debug_save_dir) if debug_save_dir else None
+        self.debug_name = debug_name
+        self.debug_max_calls = debug_max_calls
+        self.debug_max_samples = debug_max_samples
+        self.debug_call_count = 0
+
+        self.color_jitter = KA.ColorJiggle(
+            brightness=brightness,
+            contrast=contrast,
+            saturation=saturation,
+            hue=hue,
+            p=1.0,
+            same_on_batch=False,
+            keepdim=True,
+        )
+
+    def forward(
+        self,
+        *inputs: torch.Tensor,
+        kinds: Optional[Sequence[str]] = None,
+        apply_color: bool = True,
+        apply_spatial: bool = True,
+        apply_pixel_dropout: bool = True,
+        apply_random_shift: bool = True,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, ...]]:
         """
-        Load wrist calibration config for a specific episode.
-        Falls back to phase-level config if episode-level doesn't exist.
-        
         Args:
-            episode_path: Path to the episode directory
-            phase_config: Phase-level config to use as fallback (default: None)
-            
+            *inputs:
+                Variable number of aligned tensors, each of shape (B, C, H, W).
+
+            kinds:
+                Sequence of same length as inputs.
+                Each entry must be either:
+                    - "image" (expected as uint8 in [0, 255])
+                    - "depth"
+                    - "mask"
+
+                If None, all inputs are treated as "image".
+
+            apply_color:
+                Apply color jitter to inputs marked as "image" with 3 channels.
+
+            apply_spatial:
+                Apply shared random crop+resize and rotation.
+
+            apply_pixel_dropout:
+                Apply shared multi-hole dropout mask.
+
+            apply_random_shift:
+                Apply shared random translation.
+
         Returns:
-            dict: Calibration config or None
+            If one input is passed: returns one tensor.
+            Otherwise: returns tuple of tensors in same order.
         """
-        # Try episode-level first
-        episode_rotation_path = os.path.join(episode_path, "wrist_rotation.json")
-        if os.path.exists(episode_rotation_path):
-            try:
-                with open(episode_rotation_path, 'r') as f:
-                    return json.load(f)
-            except Exception as e:
-                print(f"Warning: Failed to load episode-level wrist calibration config: {e}")
-        
-        # Fall back to phase-level config
-        if phase_config is not None:
-            return phase_config
-        
-        # Final fallback to task-level (if set during init)
-        return self.task_wrist_config
-    
-    def apply_wrist_augmentation(self, img_np, aug_config, camera_key):
-        """
-        Apply calibration-based augmentation from config to a wrist camera image.
-        Supports rotation, brightness, contrast, saturation, gamma, and RGB multipliers.
-        
-        Args:
-            img_np: numpy array (H, W, C), uint8 in [0, 255] range
-            aug_config: dict with augmentation parameters per camera (psm1/psm2)
-            camera_key: 'left_wrist' or 'right_wrist'
-            
-        Returns:
-            augmented numpy array (H, W, C), uint8
-        """
-        if aug_config is None:
-            return img_np
-        
-        # Debug: validate aug_config type
-        if not isinstance(aug_config, dict):
-            print(f"ERROR: aug_config is not a dict! type={type(aug_config)}, value={aug_config}, camera_key={camera_key}")
-            return img_np
-        
-        # Map camera keys to config keys (left_wrist=psm1, right_wrist=psm2)
-        config_key = 'psm1' if camera_key == 'left_wrist' else 'psm2'
-        
-        # Handle both old format (float) and new format (dict)
-        cam_config_raw = aug_config.get(config_key, {})
-        
-        # If old format (just a float rotation value), convert to new format
-        if isinstance(cam_config_raw, (int, float)):
-            cam_config = {
-                'rotation': float(cam_config_raw),
-                'brightness': 0.0,
-                'contrast': 1.0,
-                'saturation': 1.0,
-                'gamma': 1.0,
-                'r_mul': 1.0,
-                'g_mul': 1.0,
-                'b_mul': 1.0
-            }
-        elif isinstance(cam_config_raw, dict):
-            cam_config = cam_config_raw
+        if len(inputs) == 0:
+            raise ValueError("At least one input tensor must be provided.")
+
+        if kinds is None:
+            kinds = ["image"] * len(inputs)
+
+        if len(kinds) != len(inputs):
+            raise ValueError("len(kinds) must match number of input tensors.")
+
+        self._validate_inputs(inputs, kinds)
+
+        original_dtypes = [x.dtype for x in inputs]
+        processed = [self._to_float_tensor(x) for x in inputs]
+
+        b, _, h, w = processed[0].shape
+
+        if apply_spatial:
+            crop_params = self._sample_crop_params(b, h, w, processed[0].device)
+            rot_params = self._sample_rotation_params(b, h, w, processed[0].device, processed[0].dtype)
+            processed = [
+                self._apply_spatial_to_tensor(x, kind, crop_params, rot_params)
+                for x, kind in zip(processed, kinds)
+            ]
+
+        if apply_random_shift:
+            shift_params = self._sample_shift_params(
+                b, h, w, processed[0].device, processed[0].dtype
+            )
+            processed = [
+                self._apply_shift_to_tensor(x, kind, shift_params)
+                for x, kind in zip(processed, kinds)
+            ]
+
+        if apply_color:
+            processed = [
+                self._apply_color_to_tensor(x, kind)
+                for x, kind in zip(processed, kinds)
+            ]
+
+        if apply_pixel_dropout:
+            hole_mask = self._sample_dropout_mask(
+                b, h, w, processed[0].device, processed[0].dtype
+            )
+            processed = [x * hole_mask for x in processed]
+
+        outputs = [
+            self._restore_dtype(x, dtype, kind)
+            for x, dtype, kind in zip(processed, original_dtypes, kinds)
+        ]
+
+        if len(outputs) == 1:
+            return outputs[0]
+        return tuple(outputs)
+
+    # -------------------------------------------------------------------------
+    # Validation
+    # -------------------------------------------------------------------------
+
+    def _validate_inputs(
+        self,
+        inputs: Sequence[torch.Tensor],
+        kinds: Sequence[str],
+    ) -> None:
+        valid_kinds = {"image", "depth", "mask"}
+
+        ref_shape = None
+        for idx, (x, kind) in enumerate(zip(inputs, kinds)):
+            if kind not in valid_kinds:
+                raise ValueError(
+                    f"Invalid kind '{kind}' at index {idx}. Must be 'image', 'depth', or 'mask'."
+                )
+
+            if not isinstance(x, torch.Tensor):
+                raise TypeError(f"Input {idx} must be a torch.Tensor.")
+
+            if x.ndim != 4:
+                raise ValueError(
+                    f"Input {idx} must have shape (B, C, H, W), got {tuple(x.shape)}"
+                )
+
+            if kind == "image" and x.dtype != torch.uint8:
+                raise TypeError(
+                    f"Input {idx} with kind 'image' must be torch.uint8 with values in "
+                    f"[0, 255], got {x.dtype}."
+                )
+
+            if ref_shape is None:
+                ref_shape = (x.shape[0], x.shape[2], x.shape[3])
+            else:
+                cur_shape = (x.shape[0], x.shape[2], x.shape[3])
+                if cur_shape != ref_shape:
+                    raise ValueError(
+                        "All inputs must have matching batch size and spatial size. "
+                        f"Expected (B,H,W)={ref_shape}, got {cur_shape} for input {idx}."
+                    )
+
+    # -------------------------------------------------------------------------
+    # Param sampling
+    # -------------------------------------------------------------------------
+
+    def _sample_crop_params(
+        self,
+        b: int,
+        h: int,
+        w: int,
+        device: torch.device,
+    ) -> dict:
+        crop_h = max(1, int(h * self.crop_ratio))
+        crop_w = max(1, int(w * self.crop_ratio))
+
+        max_top = h - crop_h
+        max_left = w - crop_w
+
+        if max_top > 0:
+            tops = torch.randint(0, max_top + 1, (b,), device=device)
         else:
-            print(f"WARNING: Unexpected cam_config type for {config_key}: {type(cam_config_raw)}")
-            return img_np
-        
-        if not cam_config:
-            return img_np
-        
-        # Convert to float32 for processing (keep in [0, 255] range initially)
-        img = img_np.astype(np.float32)
-        
-        # 1. Apply rotation
-        rotation = cam_config.get('rotation', 0)
-        if rotation != 0:
-            h, w = img.shape[:2]
-            center = (w // 2, h // 2)
-            rotation_matrix = cv2.getRotationMatrix2D(center, rotation, 1.0)
-            img = cv2.warpAffine(img, rotation_matrix, (w, h), 
-                                borderMode=cv2.BORDER_REFLECT_101)
-        
-        # 2. Apply brightness (additive)
-        brightness = cam_config.get('brightness', 0)
-        if brightness != 0:
-            img = np.clip(img + brightness, 0, 255)
-        
-        # 3. Apply contrast (multiplicative around 128)
-        contrast = cam_config.get('contrast', 1.0)
-        if contrast != 1.0:
-            img = np.clip((img - 128) * contrast + 128, 0, 255)
-        
-        # 4. Convert to [0, 1] for color adjustments
-        img = img / 255.0
-        
-        # 5. Apply saturation (in HSV space)
-        saturation = cam_config.get('saturation', 1.0)
-        if saturation != 1.0 and len(img.shape) == 3 and img.shape[2] == 3:
-            # Convert RGB to HSV
-            img_uint8 = np.clip(img * 255, 0, 255).astype(np.uint8)
-            img_hsv = cv2.cvtColor(img_uint8, cv2.COLOR_RGB2HSV).astype(np.float32) / 255.0
-            img_hsv[:, :, 1] = np.clip(img_hsv[:, :, 1] * saturation, 0, 1)
-            img_hsv_uint8 = np.clip(img_hsv * 255, 0, 255).astype(np.uint8)
-            img = cv2.cvtColor(img_hsv_uint8, cv2.COLOR_HSV2RGB).astype(np.float32) / 255.0
-        
-        # 6. Apply gamma correction
-        gamma = cam_config.get('gamma', 1.0)
-        if gamma != 1.0:
-            img = np.clip(img, 0, 1)  # Ensure valid range for gamma
-            img = np.power(img, gamma)
-        
-        # 7. Apply RGB multipliers
-        r_mul = cam_config.get('r_mul', 1.0)
-        g_mul = cam_config.get('g_mul', 1.0)
-        b_mul = cam_config.get('b_mul', 1.0)
-        
-        if len(img.shape) == 3 and img.shape[2] == 3 and (r_mul != 1.0 or g_mul != 1.0 or b_mul != 1.0):
-            img[:, :, 0] = np.clip(img[:, :, 0] * r_mul, 0, 1)
-            img[:, :, 1] = np.clip(img[:, :, 1] * g_mul, 0, 1)
-            img[:, :, 2] = np.clip(img[:, :, 2] * b_mul, 0, 1)
-        
-        # Convert back to uint8 with proper clipping
-        img = np.clip(img * 255, 0, 255).astype(np.uint8)
-        
-        return img
+            tops = torch.zeros((b,), device=device, dtype=torch.long)
 
-    def random_shift(self, img, shift_x=0, shift_y=0):
-        max_shift_x = int(self.img_hw[1] * 0.2)
-        max_shift_y = int(self.img_hw[0] * 0.2)
-
-        if shift_x == 0 and shift_y == 0:
-            shift_x = np.random.randint(-max_shift_x, max_shift_x)
-            shift_y = np.random.randint(-max_shift_y, max_shift_y)
-
-        img = T.functional.affine(img, angle=0, translate=(shift_x, shift_y), scale=1.0, shear=0)
-        return img, shift_x, shift_y
-
-    def __call__(self, sample, episode_path=None, phase_config=None):
-        # Load wrist augmentation config for this episode
-        aug_config = None
-        if episode_path is not None:
-            aug_config = self.load_episode_wrist_rotation(episode_path, phase_config=phase_config)
-        
-        # Convert tensors to numpy for Albumentations
-        # Note: tensors are in [0, 1] range, convert to [0, 255] uint8 for processing
-        sample_np = {}
-        for k, v in sample.items():
-            img_np = v.permute(1, 2, 0).cpu().numpy()
-            # Convert from [0, 1] float to [0, 255] uint8
-            if img_np.dtype in [np.float32, np.float64] and img_np.max() <= 1.0:
-                img_np = (img_np * 255).astype(np.uint8)
-            elif img_np.dtype != np.uint8:
-                img_np = np.clip(img_np, 0, 255).astype(np.uint8)
-            sample_np[k] = img_np
-        
-        # Apply wrist camera calibration-based augmentations BEFORE other augmentations
-        # This includes rotation, brightness, contrast, saturation, gamma, and RGB multipliers
-        if aug_config is not None:
-            for key in ['left_wrist', 'right_wrist']:
-                if key in sample_np:
-                    sample_np[key] = self.apply_wrist_augmentation(sample_np[key], aug_config, key)
-
-        # Apply spatial transforms (crop, resize, rotate) consistently
-        if 'left' in sample_np and 'mask' in sample_np:
-            aug = self.spatial_transforms(image=sample_np['left'], mask=sample_np['mask'])
-            sample_np['left'] = aug['image']
-            sample_np['mask'] = aug['mask']
+        if max_left > 0:
+            lefts = torch.randint(0, max_left + 1, (b,), device=device)
         else:
-            sample_np['left'] = self.spatial_transforms(image=sample_np['left'])['image']
+            lefts = torch.zeros((b,), device=device, dtype=torch.long)
 
-        endo_cam_spatial_tf_only = sample_np["left"]
-        endo_cam_spatial_tf_only = torch.from_numpy(endo_cam_spatial_tf_only).permute(2, 0, 1)
+        return {
+            "crop_h": crop_h,
+            "crop_w": crop_w,
+            "tops": tops,
+            "lefts": lefts,
+            "out_h": h,
+            "out_w": w,
+        }
 
-        # Apply pixel dropout consistently
-        if 'left' in sample_np and 'mask' in sample_np:
-            aug = self.pixel_dropout(image=sample_np['left'], mask=sample_np['mask'])
-            sample_np['left'] = aug['image']
-            sample_np['mask'] = aug['mask']
-        else:
-            sample_np['left'] = self.pixel_dropout(image=sample_np['left'])['image']
-            if 'left_wrist' in sample_np:
-                sample_np['left_wrist'] = self.pixel_dropout(image=sample_np['left_wrist'])['image']
-            if 'right_wrist' in sample_np:
-                sample_np['right_wrist'] = self.pixel_dropout(image=sample_np['right_wrist'])['image']
+    def _sample_rotation_params(
+        self,
+        b: int,
+        h: int,
+        w: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> dict:
+        angles = (torch.rand(b, device=device, dtype=dtype) * 2.0 - 1.0) * self.rotate_deg
 
-        # Convert back to torch tensors
-        processed = {}
-        shift_x = shift_y = 0
-        for key, img_np in sample_np.items():
-            img_t = torch.from_numpy(img_np).permute(2, 0, 1)
+        center = torch.tensor(
+            [[(w - 1) / 2.0, (h - 1) / 2.0]],
+            device=device,
+            dtype=dtype,
+        ).repeat(b, 1)
 
-            # Apply color jitter only to RGB images
-            if key in ['left', 'right', 'img_l_hist', 'img_lw', 'img_rw'] and img_t.shape[0] == 3:
-                img_t = self.color_jitter(img_t)
+        scale = torch.ones((b, 2), device=device, dtype=dtype)
+        translations = torch.zeros((b, 2), device=device, dtype=dtype)
 
-            # Apply shift (shared between 'left' and 'mask')
-            if key == 'left' or (self.stereo and key == 'right'):
-                img_t, shift_x, shift_y = self.random_shift(img_t, shift_x=shift_x, shift_y=shift_y)
-            elif key == 'mask':
-                img_t, _, _ = self.random_shift(img_t, shift_x=shift_x, shift_y=shift_y)
+        M = K.geometry.transform.get_affine_matrix2d(
+            translations=translations,
+            center=center,
+            scale=scale,
+            angle=angles,
+            sx=torch.zeros(b, device=device, dtype=dtype),
+            sy=torch.zeros(b, device=device, dtype=dtype),
+        )[:, :2, :]
 
-            processed[key] = img_t
+        return {"M": M, "dsize": (h, w)}
 
-        # Optional sketch/history masking
-        if 'img_l_hist' in processed and np.random.rand() < self.mask_sketch_prob:
-            processed['img_l_hist'] = torch.zeros_like(processed['img_l_hist'])
+    def _sample_shift_params(
+        self,
+        b: int,
+        h: int,
+        w: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> dict:
+        max_shift_x = self.max_shift_x_ratio * w
+        max_shift_y = self.max_shift_y_ratio * h
 
-        # Random full masking
-        if np.random.rand() < self.mask_prob:
-            mask_choice = np.random.choice(list(processed.keys()))
-            processed[mask_choice] = torch.zeros_like(processed[mask_choice])
+        shift_x = (torch.rand(b, device=device, dtype=dtype) * 2.0 - 1.0) * max_shift_x
+        shift_y = (torch.rand(b, device=device, dtype=dtype) * 2.0 - 1.0) * max_shift_y
+        translations = torch.stack([shift_x, shift_y], dim=1)
 
-        return processed, endo_cam_spatial_tf_only
+        center = torch.tensor(
+            [[(w - 1) / 2.0, (h - 1) / 2.0]],
+            device=device,
+            dtype=dtype,
+        ).repeat(b, 1)
+
+        scale = torch.ones((b, 2), device=device, dtype=dtype)
+        angles = torch.zeros((b,), device=device, dtype=dtype)
+
+        M = K.geometry.transform.get_affine_matrix2d(
+            translations=translations,
+            center=center,
+            scale=scale,
+            angle=angles,
+            sx=torch.zeros(b, device=device, dtype=dtype),
+            sy=torch.zeros(b, device=device, dtype=dtype),
+        )[:, :2, :]
+
+        return {"M": M, "dsize": (h, w)}
+
+    def _sample_dropout_mask(
+        self,
+        b: int,
+        h: int,
+        w: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        if torch.rand(1, device=device).item() > self.pixel_dropout_p:
+            return torch.ones((b, 1, h, w), device=device, dtype=dtype)
+
+        min_height = max(1, h // 40)
+        min_width = max(1, w // 40)
+        max_height = min(max(1, h // 30), h)
+        max_width = min(max(1, w // 30), w)
+
+        hole_mask = torch.ones((b, 1, h, w), device=device, dtype=dtype)
+
+        for i in range(b):
+            n_holes = random.randint(self.min_holes, self.max_holes)
+            for _ in range(n_holes):
+                hole_h = random.randint(min_height, max_height)
+                hole_w = random.randint(min_width, max_width)
+
+                top_max = max(0, h - hole_h)
+                left_max = max(0, w - hole_w)
+
+                top = 0 if top_max == 0 else random.randint(0, top_max)
+                left = 0 if left_max == 0 else random.randint(0, left_max)
+
+                hole_mask[i, :, top:top + hole_h, left:left + hole_w] = 0.0
+
+        return hole_mask
+
+    # -------------------------------------------------------------------------
+    # Transform application
+    # -------------------------------------------------------------------------
+
+    def _apply_spatial_to_tensor(
+        self,
+        x: torch.Tensor,
+        kind: str,
+        crop_params: dict,
+        rot_params: dict,
+    ) -> torch.Tensor:
+        b, _, _, _ = x.shape
+        crop_h = crop_params["crop_h"]
+        crop_w = crop_params["crop_w"]
+        out_h = crop_params["out_h"]
+        out_w = crop_params["out_w"]
+        tops = crop_params["tops"]
+        lefts = crop_params["lefts"]
+
+        use_bilinear = kind in {"image", "depth"}
+        mode_resize = "bilinear" if use_bilinear else "nearest"
+        mode_warp = "bilinear" if use_bilinear else "nearest"
+
+        cropped = []
+        for i in range(b):
+            top = int(tops[i].item())
+            left = int(lefts[i].item())
+
+            xi = x[i:i + 1, :, top:top + crop_h, left:left + crop_w]
+            xi = F.interpolate(
+                xi,
+                size=(out_h, out_w),
+                mode=mode_resize,
+                align_corners=False if mode_resize != "nearest" else None,
+            )
+            cropped.append(xi)
+
+        x = torch.cat(cropped, dim=0)
+
+        x = K.geometry.transform.warp_affine(
+            x,
+            rot_params["M"],
+            dsize=rot_params["dsize"],
+            mode=mode_warp,
+            padding_mode="reflection",
+            align_corners=False,
+        )
+        return x
+
+    def _apply_shift_to_tensor(
+        self,
+        x: torch.Tensor,
+        kind: str,
+        shift_params: dict,
+    ) -> torch.Tensor:
+        mode_warp = "bilinear" if kind in {"image", "depth"} else "nearest"
+
+        x = K.geometry.transform.warp_affine(
+            x,
+            shift_params["M"],
+            dsize=shift_params["dsize"],
+            mode=mode_warp,
+            padding_mode="reflection",
+            align_corners=False,
+        )
+        return x
+
+    def _apply_color_to_tensor(self, x: torch.Tensor, kind: str) -> torch.Tensor:
+        if kind == "image" and x.shape[1] == 3:
+            x = x.clamp(min=0.0)
+            x = self.color_jitter(x)
+        return x
+
+    # -------------------------------------------------------------------------
+    # Dtype helpers
+    # -------------------------------------------------------------------------
+
+    def _to_float_tensor(self, x: torch.Tensor) -> torch.Tensor:
+        if x.dtype == torch.uint8:
+            return x.float() / 255.0
+        if not x.is_floating_point():
+            return x.float()
+        return x
+
+    def _restore_dtype(
+        self,
+        x: torch.Tensor,
+        dtype: torch.dtype,
+        kind: str,
+    ) -> torch.Tensor:
+        if dtype == torch.uint8:
+            return (x.clamp(0.0, 1.0) * 255.0).round().to(torch.uint8)
+
+        if dtype == torch.bool:
+            return x > 0.5
+
+        if dtype in (torch.int8, torch.int16, torch.int32, torch.int64):
+            return x.round().to(dtype)
+
+        return x.to(dtype)

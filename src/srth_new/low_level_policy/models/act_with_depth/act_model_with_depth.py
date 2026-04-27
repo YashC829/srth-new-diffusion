@@ -17,7 +17,7 @@ from srth_new.low_level_policy.models.act_with_depth.detr_vae_depth import (
     DETRVAEDepth,
 )
 from srth_new.general.third_party.EndoSynth.endosynth.models import load as load_depth_model
-from srth_new.low_level_policy.dataset.img_aug_new import ImageAug
+from srth_new.low_level_policy.dataset.img_aug import ImageAug
 
 import logging
 log = logging.getLogger(__name__)

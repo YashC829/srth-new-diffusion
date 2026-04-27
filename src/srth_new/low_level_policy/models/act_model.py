@@ -13,7 +13,7 @@ from srth_new.low_level_policy.models.detr.models.backbone import build_image_ba
 from srth_new.low_level_policy.models.detr.models.transformer import build_transformer
 from srth_new.low_level_policy.models.detr.models.detr_vae import build_encoder
 from srth_new.low_level_policy.models.detr.models.detr_vae import DETRVAE
-from srth_new.low_level_policy.dataset.img_aug_new import ImageAug
+from srth_new.low_level_policy.dataset.img_aug import ImageAug
 
 import logging
 log = logging.getLogger(__name__)

@@ -19,7 +19,7 @@ import wandb
 from srth_new.general.utils import processing
 from srth_new.general.utils import dataset as general_dataset_utils
 from srth_new.general.utils.processing import compute_diffs, DatasetStats
-from srth_new.low_level_policy.dataset.low_level_dataset_new_format import EpisodicDatasetDvrkGeneric
+from srth_new.low_level_policy.dataset.low_level_dataset import EpisodicDatasetDvrkGeneric
 from srth_new.general import constants
 
 import logging
