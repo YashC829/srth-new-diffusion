@@ -6,9 +6,9 @@ defaults:
 
 seed: 1          # Global random seed for NumPy / PyTorch / data shuffling.
 device: cuda     # Falls back to CPU only if the training code is updated to do so explicitly.
+action_mode: hybrid_relative
 
 train:
-  action_mode: hybrid_relative
   num_train_steps: 10000
   num_warmup_steps: 200
   save_every: 50            # Save a checkpoint every N training steps.

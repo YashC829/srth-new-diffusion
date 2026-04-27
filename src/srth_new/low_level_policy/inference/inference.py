@@ -2,7 +2,6 @@ import threading
 import time
 
 import cv2
-from cv_bridge import CvBridge
 from einops import rearrange
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,7 +13,6 @@ from srth_new.low_level_policy.models.act_model import ACTPolicy
 # From ros packages
 import crtk
 from srth_new.low_level_policy.inference.dvrk_control import example_application
-import rospy
 from srth_new.low_level_policy.inference.rostopics import ros_topics
 from std_msgs.msg import Bool
 
@@ -56,18 +54,21 @@ class LowLevelPolicy:
         self._inference_thread = None
         self._shutdown_event = threading.Event()
         self._control_update_event = threading.Event()
+        self._ros_cleaned_up = False
 
     def init_ros(self):
-
-        # TODO: Not sure what the below does, so not going to remove for now. In
-        # the future we should prune and organize this...
-
-        self.rt = ros_topics()
         self.ral = crtk.ral('dvrk_arm_test')
-        self.bridge = CvBridge()
-        self.psm1_app = example_application(self.ral, "PSM1", 1)
-        self.psm2_app = example_application(self.ral, "PSM2", 1)
-        self.pause_sub = rospy.Subscriber("/pause_robot", Bool, self.pause_robot_callback, queue_size=10)
+        self.ral.spin()
+        self.ral.on_shutdown(self._shutdown_event.set)
+        self.rt = ros_topics(self.ral._node)
+        self.psm1_app = example_application(self.ral, "PSM1", 5.0)
+        self.psm2_app = example_application(self.ral, "PSM2", 5.0)
+        self.pause_sub = self.ral._node.create_subscription(
+            Bool,
+            "/pause_robot",
+            self.pause_robot_callback,
+            10,
+        )
 
     ## --------------------- callbacks -----------------------
     
@@ -78,6 +79,25 @@ class LowLevelPolicy:
             print("Robot paused. Waiting for the robot to be unpaused...")
         else:
             print("Robot unpaused. Resuming the low level policy...")
+
+    def is_ros_shutdown(self) -> bool:
+        return self.ral.is_shutdown()
+
+    def shutdown_ros(self) -> None:
+        if self._ros_cleaned_up:
+            return
+
+        self._ros_cleaned_up = True
+        self._shutdown_event.set()
+
+        try:
+            if getattr(self, "rt", None) is not None:
+                self.rt.destroy()
+        finally:
+            if getattr(self, "pause_sub", None) is not None:
+                self.ral._node.destroy_subscription(self.pause_sub)
+                self.pause_sub = None
+            self.ral.shutdown()
 
     def is_paused(self) -> bool:
         return self._manual_pause or self._ros_pause
@@ -231,21 +251,27 @@ class LowLevelPolicy:
             f"prediction_frequency_hz={prediction_frequency_hz:.3f} Hz | "
             f"action_execution_hz={action_execution_hz:.3f} Hz | command={command}"
         )
+
+    @staticmethod
+    def _decode_compressed_image(message) -> np.ndarray:
+        image_buffer = np.frombuffer(bytes(message.data), dtype=np.uint8)
+        image = cv2.imdecode(image_buffer, cv2.IMREAD_COLOR)
+        if image is None:
+            raise ValueError("Failed to decode compressed image from ROS topic")
+        return image
     
     def get_image_dvrk(self):
-
-        self.left_img = np.fromstring(self.rt.usb_image_left.data, np.uint8)
-        self.left_img = cv2.imdecode(self.left_img, cv2.IMREAD_COLOR)
+        self.left_img = self._decode_compressed_image(self.rt.usb_image_left)
         self.left_img = cv2.resize(self.left_img, (480, 360))
         self.left_img = cv2.cvtColor(self.left_img, cv2.COLOR_BGR2RGB)
         self.left_img = rearrange(self.left_img, 'h w c -> c h w')
 
-        self.psm2_img = np.fromstring(self.rt.endo_cam_psm2.data, np.uint8)
+        self.psm2_img = self._decode_compressed_image(self.rt.endo_cam_psm2)
         self.psm2_img = cv2.resize(self.psm2_img, (480, 360))
         self.psm2_img = cv2.cvtColor(self.psm2_img, cv2.COLOR_BGR2RGB)
         self.psm2_img = rearrange(self.psm2_img, 'h w c -> c h w')
 
-        self.psm1_img = np.fromstring(self.rt.endo_cam_psm1.data, np.uint8)
+        self.psm1_img = self._decode_compressed_image(self.rt.endo_cam_psm1)
         self.psm1_img = cv2.resize(self.psm1_img, (480, 360))
         self.psm1_img = cv2.cvtColor(self.psm1_img, cv2.COLOR_BGR2RGB)
         self.psm1_img = rearrange(self.psm1_img, 'h w c -> c h w')
@@ -321,17 +347,17 @@ class LowLevelPolicy:
         num_steps = min(self.policy.num_queries, len(actions_psm1), len(actions_psm2))
 
         for jj in range(num_steps):
-            if stop_event.is_set() or self._shutdown_event.is_set() or rospy.is_shutdown():
+            if stop_event.is_set() or self._shutdown_event.is_set() or self.is_ros_shutdown():
                 return
 
             while self.is_paused() and not stop_event.is_set() and not self._shutdown_event.is_set():
                 time.sleep(0.01)
 
-            if stop_event.is_set() or self._shutdown_event.is_set() or rospy.is_shutdown():
+            if stop_event.is_set() or self._shutdown_event.is_set() or self.is_ros_shutdown():
                 return
 
-            self.ral.spin_and_execute(self.psm1_app.run_full_pose_goal, actions_psm1[jj])
-            self.ral.spin_and_execute(self.psm2_app.run_full_pose_goal, actions_psm2[jj])
+            self.psm1_app.run_full_pose_goal(actions_psm1[jj])
+            self.psm2_app.run_full_pose_goal(actions_psm2[jj])
             _, _, _, action_execution_period, _ = self.get_runtime_controls()
             sleep_deadline = time.monotonic() + action_execution_period
             while not stop_event.is_set() and not self._shutdown_event.is_set():
@@ -351,20 +377,14 @@ class LowLevelPolicy:
         self._execution_stop_event = None
 
     def start_action_execution(self, actions_psm1, actions_psm2):
-        # self.stop_action_execution()
-        # self._execution_stop_event = threading.Event()
-        # self._execution_thread = threading.Thread(
-        #     target=self.execute_actions,
-        #     args=(actions_psm1, actions_psm2, self._execution_stop_event),
-        #     daemon=True,
-        # )
-        # self._execution_thread.start()
-
-        # the old code's way of doing it. let's test to see if this works...
-        for jj in range(30):
-            self.ral.spin_and_execute(self.psm1_app.run_full_pose_goal, actions_psm1[jj])
-            self.ral.spin_and_execute(self.psm2_app.run_full_pose_goal, actions_psm2[jj])
-            time.sleep(0.18)
+        self.stop_action_execution()
+        self._execution_stop_event = threading.Event()
+        self._execution_thread = threading.Thread(
+            target=self.execute_actions,
+            args=(actions_psm1, actions_psm2, self._execution_stop_event),
+            daemon=True,
+        )
+        self._execution_thread.start()
 
 
 
@@ -376,14 +396,14 @@ class LowLevelPolicy:
 
         try:
             while not self.rt.has_received_all_topics():
-                if rospy.is_shutdown() or self._shutdown_event.is_set():
+                if self.is_ros_shutdown() or self._shutdown_event.is_set():
                     return False
 
                 now = time.monotonic()
                 if now >= next_log_time:
                     missing_topics = self.rt.get_missing_topics()
-                    rospy.logerr(
-                        "\033[91mWaiting for subscribed ROS topics to receive their first message. Missing topics:\n%s\033[0m",
+                    log.error(
+                        "Waiting for subscribed ROS topics to receive their first message. Missing topics:\n%s",
                         "\n".join(f"  - {topic}" for topic in missing_topics),
                     )
                     next_log_time = now + log_interval_s
@@ -399,6 +419,7 @@ class LowLevelPolicy:
 
     def run(self):
         if not self.wait_for_required_topics():
+            self.shutdown_ros()
             return
 
         if self.enable_gui:
@@ -424,7 +445,7 @@ class LowLevelPolicy:
             try:
                 next_prediction_time = time.monotonic()
 
-                while not rospy.is_shutdown() and not self._shutdown_event.is_set():
+                while not self.is_ros_shutdown() and not self._shutdown_event.is_set():
                     if self._control_update_event.is_set():
                         self._control_update_event.clear()
                         self.stop_action_execution()
@@ -457,3 +478,4 @@ class LowLevelPolicy:
             finally:
                 self._shutdown_event.set()
                 self.stop_action_execution()
+                self.shutdown_ros()

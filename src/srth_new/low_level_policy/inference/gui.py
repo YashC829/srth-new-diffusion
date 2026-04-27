@@ -5,8 +5,6 @@ import threading
 import time
 from typing import Protocol
 
-import rospy
-
 log = logging.getLogger(__name__)
 
 
@@ -31,6 +29,9 @@ class InferenceGuiRuntime(Protocol):
         ...
 
     def _run_inference_loop(self) -> None:
+        ...
+
+    def is_ros_shutdown(self) -> bool:
         ...
 
     def stop_action_execution(self) -> None:
@@ -111,7 +112,7 @@ def run_inference_gui(runtime: InferenceGuiRuntime) -> bool:
         status_var.set(f"Applied at {time.strftime('%H:%M:%S')}")
 
     def poll_runtime_state():
-        if runtime._shutdown_event.is_set() or rospy.is_shutdown():
+        if runtime._shutdown_event.is_set() or runtime.is_ros_shutdown():
             _close_gui_window(root)
             return
 

@@ -18,8 +18,12 @@ __pycache__/
 # catkin_ws build directories
 .catkin_tools
 build
+install
+log
 devel
 logs
+
+ros2_ws/src/*
 
 saved_runs
 

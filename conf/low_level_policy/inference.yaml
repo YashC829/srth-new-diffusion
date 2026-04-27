@@ -5,6 +5,7 @@ defaults:
 
 device: cuda
 checkpoint_path: ??? # Required path to a saved checkpoint.
+action_mode: hybrid_relative
 prediction_frequency_hz: 5.0
 action_execution_hz: 20.0
 enable_gui: true

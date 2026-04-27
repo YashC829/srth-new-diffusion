@@ -1,7 +1,3 @@
-from srth_new.low_level_policy.inference.rostopics import ros_topics
-import rospy
-import time
-
 import argparse
 import sys
 import time
@@ -11,22 +7,17 @@ import math
 import numpy as np
 import PyKDL
 
-# rt = ros_topics() 
-# rospy.init_node('rostopic_recorder', anonymous=True)
-# time.sleep(0.5)
-# print(rt.psm1_pose)
-
 # example of application using arm.py
 class example_application:
 
     # configuration
-    def __init__(self, ral, arm_name, expected_interval):
+    def __init__(self, ral, arm_name, connection_timeout):
         print('configuring dvrk_arm_test for {}'.format(arm_name))
         self.ral = ral
-        self.expected_interval = expected_interval
+        self.connection_timeout = connection_timeout
         self.arm = dvrk.psm(ral = ral,
                             arm_name = arm_name,
-                            expected_interval = expected_interval)
+                            connection_timeout = connection_timeout)
         self.arm_name = arm_name
         # self.arm = dvrk.psm(arm_name = arm_name,
         #             expected_interval = expected_interval)
@@ -525,10 +516,6 @@ class example_application:
         # for i in range(samples * 4):
         #     goal = start_angle + amplitude * (math.cos(i * math.radians(360.0) / samples) - 1.0)
         #     self.arm.jaw.servo_jp(np.array(goal))
-        #     rospy.sleep(self.expected_interval)
-
-
-
     # main method
     def run(self, goal):
         # self.home()
