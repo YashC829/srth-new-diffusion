@@ -80,6 +80,7 @@ typer
 typing-inspection
 wandb
 wcwidth
+lerobot==0.4.4
 
 
 

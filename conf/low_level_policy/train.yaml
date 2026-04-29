@@ -9,11 +9,11 @@ device: cuda     # Falls back to CPU only if the training code is updated to do 
 action_mode: hybrid_relative
 
 train:
-  num_train_steps: 10000
-  num_warmup_steps: 200
-  save_every: 50            # Save a checkpoint every N training steps.
-  keep_every: 500          # Prune checkpoints so only one representative checkpoint survives per bin.
-  validate_every: 5         # Run the validation loop every N training steps.
+  num_train_steps: 500000
+  num_warmup_steps: 50000
+  save_every: 10000            # Save a checkpoint every N training steps.
+  keep_every: 50000            # Prune checkpoints so only one representative checkpoint survives per bin.
+  validate_every: 1000         # Run the validation loop every N training steps.
   checkpoint_dir: ${hydra:runtime.output_dir}/checkpoints
   resume_checkpoint: null   # Optional checkpoint path to resume model/optimizer/scheduler state from.
 

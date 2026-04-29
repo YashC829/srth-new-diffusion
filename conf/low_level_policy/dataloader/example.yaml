@@ -1,15 +1,30 @@
-dataset_dir: /home/grayson/surpass/srth-surpass/raw_data/Cholecystectomy_grasp_only
-# Root directory containing the low-level training episodes.
+repo_id: surpass/cholecystectomy_new
 
-num_episodes_train: 100      # Number of training episodes to sample from the listed tissues.
-tissue_sample_ids_train: [1] # Tissue/sample IDs used to build the training split.
-
-num_episodes_val: 28         # Number of validation episodes to sample.
-tissue_sample_ids_val: [2]   # Tissue/sample IDs reserved for validation.
-
-chunk_size: 60                    # Number of action timesteps predicted per sample.
-
-use_auto_label: false             # Reserved flag for auto-label behavior; currently unclear / experimental.
-
+tissue_sample_ids_train: [Tissue#2, Tissue#3, Tissue#4, Tissue#5]
+tissue_sample_ids_val: [Tissue#1]
+chunk_size: 60
 batch_size: 12                    # Batch size for both train and validation dataloaders.
 num_workers: 16                   # DataLoader worker processes.
+
+action_mode: ${..action_mode}
+
+phases:
+  unzipping:
+        - 1_grabbing_gallbladder_right
+        # - 1_grabbing_gallbladder_right_recovery
+        # - 2_initial_incision
+        # - 2_initial_incision_recovery
+        # - 3_hook_to_local_home
+        # - 4_hook_tissue
+        # - 4_hook_tissue_recovery
+        # - 5_cauterize_tissue_right
+        # - 6_hook_to_global_home
+        # - 7_grasper_to_home
+        # - 8_grabbing_gallbladder_left
+        # - 8_grabbing_gallbladder_left_recovery
+        # - 9_returning_to_initial_incision
+        # - 9_returning_to_initial_incision_recovery
+        # - 10_cauterize_tissue_left
+        # - 11_regrab
+        # - 12_hook_to_global_home
+        # - 13_grasper_to_home

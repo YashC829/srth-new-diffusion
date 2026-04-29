@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -15,7 +16,7 @@ def get_valid_ep_start_end_indices(
         ep_dir_path, # path to the episode directory
     ):
     # Load the start and end indices for the current demo as the valid range of the demo
-    num_ep_frames = len(os.listdir(Path(ep_dir_path).joinpath(constants.THIRD_PERSON_CAM_DIR_NAME)))
+    num_ep_frames = len(os.listdir(Path(ep_dir_path).joinpath(constants.LEFT_ENDOSCOPE_CAM_DIR_NAME)))
     start, end = 0, num_ep_frames - 1
     demo_num_frames_valid = end - start + 1
 
@@ -40,7 +41,7 @@ def validate_selected_phases(phases: DictConfig) -> None:
                     f"{', '.join(list(valid_low_level_phase_set))}"
                 )
 
-def get_episode_directories(
+def get_episode_directories_by_tissue_id_and_phase(
         dataset_dir: str, tissue_ids: List[int], phases: DictConfig
     ) -> Tuple[List[str], Dict[str, int]]:
     samples = {}
@@ -81,3 +82,84 @@ def get_episode_directories(
                     num_episodes_info[phase_desc] += len(temp_episode_dirs)
 
     return episode_dirs, num_episodes_info
+
+def get_all_episode_directories(dataset_dir: str) -> Tuple[List[str], Dict[str, int]]:
+    episode_dirs: List[str] = []
+    num_episodes_info: Dict[str, int] = {}
+
+    if not os.path.exists(dataset_dir):
+        raise Exception(f"Dataset directory does not exist: {dataset_dir}")
+
+    for tissue_name in os.listdir(dataset_dir):
+        tissue_dir = os.path.join(dataset_dir, tissue_name)
+
+        if not os.path.isdir(tissue_dir) or not tissue_name.startswith("Tissue#"):
+            continue
+
+        for annotator_name in os.listdir(tissue_dir):
+            annotator_dir = os.path.join(tissue_dir, annotator_name)
+
+            if not os.path.isdir(annotator_dir):
+                continue
+
+            for high_level_phase in os.listdir(annotator_dir):
+                high_level_phase_dir = os.path.join(annotator_dir, high_level_phase)
+
+                if not os.path.isdir(high_level_phase_dir):
+                    continue
+
+                for low_level_phase in os.listdir(high_level_phase_dir):
+                    low_level_phase_dir = os.path.join(
+                        high_level_phase_dir,
+                        low_level_phase,
+                    )
+
+                    if not os.path.isdir(low_level_phase_dir):
+                        continue
+
+                    temp_episode_dirs = [
+                        os.path.join(low_level_phase_dir, episode_name)
+                        for episode_name in os.listdir(low_level_phase_dir)
+                        if os.path.isdir(
+                            os.path.join(low_level_phase_dir, episode_name)
+                        )
+                    ]
+
+                    episode_dirs.extend(temp_episode_dirs)
+
+                    phase_desc = f"{high_level_phase}-{low_level_phase}"
+                    num_episodes_info[phase_desc] = (
+                        num_episodes_info.get(phase_desc, 0)
+                        + len(temp_episode_dirs)
+                    )
+
+    # remove phases that do not contain any episodes for brevity
+    keys_to_delete = list()
+    for phase, val in num_episodes_info.items():
+        if val == 0:
+            keys_to_delete.append(phase)
+    for phase in keys_to_delete:
+        del num_episodes_info[phase]
+
+    return episode_dirs, num_episodes_info
+
+def clean_low_level_phase_from_cfg(phase):
+    return " ".join(phase.split("_")[1:])
+
+def clean_high_level_phase_from_cfg(phase):
+    return phase.replace("_", " ")
+
+def get_low_level_phase_from_csv_path(csv_path: str) -> str:
+    return " ".join(Path(csv_path).parts[-3].split("_")[1:])
+
+def get_low_level_phase_from_ep_dir(ep_dir: str) -> str:
+    return " ".join(Path(ep_dir).parts[-2].split("_")[1:])
+
+def get_high_level_phase_from_ep_dir(ep_dir: str) -> str:
+    return Path(ep_dir).parts[-3]
+
+def get_collector_from_ep_dir(ep_dir: str) -> str:
+    return Path(ep_dir).parts[-4]
+
+def get_tissue_name_from_ep_dir(ep_dir: str) -> str:
+    return Path(ep_dir).parts[-5]

@@ -37,7 +37,7 @@ class EpisodicDatasetDvrkGeneric(torch.utils.data.Dataset):
         random.shuffle(self.episode_dirs)
 
         self.available_cameras = [
-            constants.THIRD_PERSON_CAM_NAME, 
+            constants.LEFT_ENDOSCOPE_CAM_NAME, 
             constants.PSM1_WRIST_CAM_NAME, 
             constants.PSM2_WRIST_CAM_NAME
         ]
@@ -112,10 +112,10 @@ class EpisodicDatasetDvrkGeneric(torch.utils.data.Dataset):
         # load images for all cameras
         # Map camera names to their source identifiers and suffixes
         camera_source_map = {
-            constants.THIRD_PERSON_CAM_NAME: (
-                constants.THIRD_PERSON_CAM_NAME, 
+            constants.LEFT_ENDOSCOPE_CAM_NAME: (
+                constants.LEFT_ENDOSCOPE_CAM_NAME, 
                 f'_{constants.THIRD_PERSON_CAM_IMG_SUFFIX}.jpg', 
-                constants.THIRD_PERSON_CAM_DIR_NAME
+                constants.LEFT_ENDOSCOPE_CAM_DIR_NAME
             ),
             constants.PSM2_WRIST_CAM_NAME: (
                 constants.PSM2_WRIST_CAM_DIR_NAME, 
@@ -172,7 +172,7 @@ class EpisodicDatasetDvrkGeneric(torch.utils.data.Dataset):
         command_text = self._get_low_level_phase_from_csv_path(csv_path)
 
         return (
-            img_dict[constants.THIRD_PERSON_CAM_NAME],
+            img_dict[constants.LEFT_ENDOSCOPE_CAM_NAME],
             img_dict[constants.PSM2_WRIST_CAM_NAME],
             img_dict[constants.PSM1_WRIST_CAM_NAME],
             current_pose_data,                          # current pose in endo frame

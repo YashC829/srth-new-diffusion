@@ -106,7 +106,7 @@ class HighLevelDatasetSRTH(torch.utils.data.Dataset):
                 # add episode names and len to the phase dict
                 for ep_dir_name in episode_dir_names:
                     ep_dir_path = tissue_dir.joinpath(phase_dir, ep_dir_name)
-                    num_phase_frames = len(os.listdir(ep_dir_path.joinpath(constants.THIRD_PERSON_CAM_DIR_NAME)))
+                    num_phase_frames = len(os.listdir(ep_dir_path.joinpath(constants.LEFT_ENDOSCOPE_CAM_DIR_NAME)))
                     phase_info_dict[phase_dir].append(
                         {"episode_dir": ep_dir_name, "num_phase_frames": num_phase_frames}
                     )

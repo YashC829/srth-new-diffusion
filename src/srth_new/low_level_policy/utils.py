@@ -19,7 +19,7 @@ import wandb
 from srth_new.general.utils import processing
 from srth_new.general.utils import dataset as general_dataset_utils
 from srth_new.general.utils.processing import compute_diffs, DatasetStats
-from srth_new.low_level_policy.dataset.low_level_dataset import EpisodicDatasetDvrkGeneric
+from srth_new.low_level_policy.dataset.low_level_dataset_lerobot import EpisodicDatasetDvrkGeneric
 from srth_new.general import constants
 
 import logging
@@ -382,41 +382,46 @@ def load_dataset_stats(
 
 
 def load_dataloaders(cfg: DictConfig):
-    log.info(f"Loading data from {cfg.dataset_dir}")
-    dataset_stats = load_dataset_stats(cfg.dataset_dir, cfg.tissue_sample_ids_train, cfg.phases, cfg.action_mode)
+    log.info(f"Loading data from {cfg.repo_id}")
+    dataset_stats = load_dataset_stats(cfg.repo_id, cfg.tissue_sample_ids_train, cfg.phases, cfg.action_mode)
 
     train_dataset = EpisodicDatasetDvrkGeneric(
-        cfg.dataset_dir,
+        cfg.repo_id,
         cfg.tissue_sample_ids_train,
         cfg.phases,
         cfg.chunk_size
     )
 
     val_dataset = EpisodicDatasetDvrkGeneric(
-        cfg.dataset_dir,
+        cfg.repo_id,
         cfg.tissue_sample_ids_val,
         cfg.phases,
         cfg.chunk_size
     )
 
-    task_labels = [
-        f"{Path(ep).parts[-3]}-{Path(ep).parts[-2]}"
-        for ep in train_dataset.episode_dirs
-    ]
-    task_counts = Counter(task_labels)
+    # we have removed the train sampler for now...
+    # task_labels = [
+    #     f"{Path(ep).parts[-3]}-{Path(ep).parts[-2]}"
+    #     for ep in train_dataset.episode_dirs
+    # ]
+    # task_counts = Counter(task_labels)
 
-    # Compute weights based on task density in dataset distribution
-    weights = [1.0 / task_counts[task] for task in task_labels]
-    assert len(weights) == len(train_dataset)
+    # # Compute weights based on task density in dataset distribution
+    # weights = [1.0 / task_counts[task] for task in task_labels]
+    # assert len(weights) == len(train_dataset)
 
-    train_sampler = WeightedRandomSampler(weights, num_samples=len(train_dataset.episode_dirs), replacement=True)
+    # train_sampler = WeightedRandomSampler(weights, num_samples=len(train_dataset.episode_dirs), replacement=True)
 
+    # train_dataloader = DataLoader(
+    #     train_dataset, batch_size=cfg.batch_size, sampler=train_sampler,
+    #     pin_memory=True, num_workers=cfg.num_workers,  persistent_workers=True
+    # )
     train_dataloader = DataLoader(
-        train_dataset, batch_size=cfg.batch_size, sampler=train_sampler,
+        train_dataset, batch_size=cfg.batch_size, shuffle=True,
         pin_memory=True, num_workers=cfg.num_workers,  persistent_workers=True
     )
     val_dataloader = DataLoader(
-        val_dataset, batch_size=cfg.batch_size, pin_memory=True, 
+        val_dataset, batch_size=cfg.batch_size, pin_memory=True, shuffle=True,
         num_workers=cfg.num_workers,  persistent_workers=True
     )
 

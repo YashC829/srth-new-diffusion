@@ -120,7 +120,11 @@ class DVRKPolicy(nn.Module):
         actions: torch.Tensor,
         is_pad: torch.Tensor
     ) -> torch.Tensor:
-        """Convert absolute dataset actions into normalized policy targets."""
+        """Take current absolute actions and pose and do the following:
+            1. Convert absolute actions to relative actions according to the chosen
+                self.action_mode
+            2. Normalize the relative actions according to chosen self.norm_scheme
+        """
         policy_actions = processing.convert_action_batch_to_relative(
             current_pose, actions, is_pad, self.action_mode
         )

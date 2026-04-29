@@ -53,34 +53,39 @@ def resume_training_state(
 
     return start_step
 
+def log_to_wandb(metrics, summary_prefix, step):
+    # Compute Mean Metrics and Log to WandB and Local Files
+    avg_metrics = utils.compute_dict_mean(metrics)
+    step_sumarry = {f"{summary_prefix}/{k}": v.item() for k, v in avg_metrics.items()}
+    wandb.log(step_sumarry, step=step)
+    log.info(f"{summary_prefix} - Step: {step} - Summary: {step_sumarry}")
 
-def run_policy_step(
-    train_cfg: DictConfig,
-    policy,
-    dataloader: torch.utils.data.DataLoader,
-    device: torch.device,
-    step: int,
-    optimizer: torch.optim.Optimizer,
-    scheduler: LambdaLR,
-    run_val: bool = False
+
+def validate(cfg: DictConfig):
+    if cfg.wandb.resume and not cfg.train.resume_checkpoint:
+        raise Exception(
+            "wandb.resume=true but train.resume_checkpoint is unset. incompatible behavior"
+        )
+    
+
+def run_training(
+    train_cfg, policy, train_loader, val_loader, device, optimizer, scheduler, starting_step
 ):
-    
-    metrics = list()
+    train_metrics = list()
+    val_metrics = list()
+    training_step = starting_step
 
-    # Validation Step
-    if run_val:
-        with torch.inference_mode():
-            policy.eval()
-            for data in dataloader:
-                endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text = utils.collect_data(data, device)
-                forward_dict = policy(endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text)
+    pbar = tqdm(
+        total=train_cfg.num_train_steps,
+        initial=training_step,
+        desc="Training",
+        unit="step",
+    )
 
-                metrics.append(utils.detach_dict(forward_dict))
-    
-    # Training Step
-    else:
-        policy.train()
-        for data in tqdm(dataloader):
+    while training_step < train_cfg.num_train_steps:
+
+        # run training
+        for data in train_loader:
             endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text = utils.collect_data(data, device)
             forward_dict = policy(endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text)
 
@@ -89,39 +94,56 @@ def run_policy_step(
             optimizer.step()
             optimizer.zero_grad()
 
-            metrics.append(utils.detach_dict(forward_dict))
-        scheduler.step() # scheduler done once per training step (full pass through dataloader)
+            train_metrics.append(utils.detach_dict(forward_dict))
+            training_step += 1
+            scheduler.step()
 
-    # Compute Mean Metrics and Log to WandB and Local Files
-    avg_metrics = utils.compute_dict_mean(metrics)
-    summary_prefix = "train" if not run_val else "val"
-    epoch_summary = {f"{summary_prefix}/{k}": v.item() for k, v in avg_metrics.items()}
-    wandb.log(epoch_summary, step=step)
-    log.info(f"{summary_prefix} - Step: {step} - Summary: {epoch_summary}")
+            pbar.update(1)
+            pbar.set_postfix(loss=f"{loss.item():.4f}")
 
-    # Prune Checkpoints
-    utils.prune_checkpoints(train_cfg.checkpoint_dir, train_cfg.keep_every)
+            # run validation and log loss metrics to wandb
+            if training_step % train_cfg.validate_every == 0:
+                with torch.inference_mode():
+                    policy.eval()
+                    val_batches = 0
+                    val_sample_size = min(100, len(val_loader))
+                    for data in val_loader:
+                        endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text = utils.collect_data(data, device)
+                        forward_dict = policy(endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text)
 
-    # Save Checkpoints
-    if step % train_cfg.save_every == 0:
-        os.makedirs(train_cfg.checkpoint_dir, exist_ok=True)
-        ckpt_path = Path(train_cfg.checkpoint_dir).joinpath(f"train_step_{step}.ckpt")
-        torch.save(
-            {
-                "policy_state": policy.serialize(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "scheduler_state_dict": scheduler.state_dict(),
-                "step": step,
-            },
-            ckpt_path
-        )
+                        val_metrics.append(utils.detach_dict(forward_dict))
+                        val_batches += 1
 
+                        if val_batches >= val_sample_size:
+                            break
+                
+                # log to wandb and clear out metrics
+                log_to_wandb(train_metrics, "train", training_step)
+                log_to_wandb(val_metrics, "val", training_step)
+                train_metrics = list()
+                val_metrics = list()
 
-def validate(cfg: DictConfig):
-    if cfg.wandb.resume and not cfg.train.resume_checkpoint:
-        raise Exception(
-            "wandb.resume=true but train.resume_checkpoint is unset. incompatible behavior"
-        )
+            # Prune Checkpoints
+            utils.prune_checkpoints(train_cfg.checkpoint_dir, train_cfg.keep_every)
+
+            # Save Checkpoints
+            if training_step % train_cfg.save_every == 0:
+                os.makedirs(train_cfg.checkpoint_dir, exist_ok=True)
+                ckpt_path = Path(train_cfg.checkpoint_dir).joinpath(f"train_step_{training_step}.ckpt")
+                torch.save(
+                    {
+                        "policy_state": policy.serialize(),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "scheduler_state_dict": scheduler.state_dict(),
+                        "step": training_step,
+                    },
+                    ckpt_path
+                )
+
+            if training_step >= train_cfg.num_train_steps:
+                break
+    
+    pbar.close()
 
 
 @hydra.main(version_base=None, config_path="../../../conf/low_level_policy", config_name="train")
@@ -140,17 +162,7 @@ def main(cfg: DictConfig) -> None:
         num_training_steps=cfg.train.num_train_steps
     )
     start_step = resume_training_state(cfg.train, policy, scheduler, device)
-
-    for step in range(start_step, cfg.train.num_train_steps):
-        run_policy_step(
-            cfg.train, policy, train_loader, 
-            device, step, optimizer, scheduler
-        )
-        if step % cfg.train.validate_every == 0:
-            run_policy_step(
-                cfg.train, policy, val_loader,
-                device, step, optimizer, scheduler, run_val=True
-            )
+    run_training(cfg.train, policy, train_loader, val_loader, device, optimizer, scheduler, start_step)
 
 
 if __name__ == "__main__":
