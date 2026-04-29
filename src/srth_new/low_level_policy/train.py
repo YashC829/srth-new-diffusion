@@ -53,12 +53,12 @@ def resume_training_state(
 
     return start_step
 
-def log_to_wandb(metrics, summary_prefix, step):
+def log_to_wandb(metrics, summary_prefix, epoch, step):
     # Compute Mean Metrics and Log to WandB and Local Files
     avg_metrics = utils.compute_dict_mean(metrics)
-    step_sumarry = {f"{summary_prefix}/{k}": v.item() for k, v in avg_metrics.items()}
-    wandb.log(step_sumarry, step=step)
-    log.info(f"{summary_prefix} - Step: {step} - Summary: {step_sumarry}")
+    step_sumary = {f"{summary_prefix}/{k}": v.item() for k, v in avg_metrics.items()}
+    wandb.log(step_sumary, step=step)
+    log.info(f"{summary_prefix} - Epoch/Step: {epoch}/{step} - Summary: {step_sumary}")
 
 
 def validate(cfg: DictConfig):
@@ -74,6 +74,8 @@ def run_training(
     train_metrics = list()
     val_metrics = list()
     training_step = starting_step
+
+    epoch = starting_step // len(train_loader)
 
     pbar = tqdm(
         total=train_cfg.num_train_steps,
@@ -106,7 +108,7 @@ def run_training(
                 with torch.inference_mode():
                     policy.eval()
                     val_batches = 0
-                    val_sample_size = min(100, len(val_loader))
+                    val_sample_size = min(1000, len(val_loader))
                     for data in val_loader:
                         endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text = utils.collect_data(data, device)
                         forward_dict = policy(endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text)
@@ -118,8 +120,8 @@ def run_training(
                             break
                 
                 # log to wandb and clear out metrics
-                log_to_wandb(train_metrics, "train", training_step)
-                log_to_wandb(val_metrics, "val", training_step)
+                log_to_wandb(train_metrics, "train", epoch, training_step)
+                log_to_wandb(val_metrics, "val", epoch, training_step)
                 train_metrics = list()
                 val_metrics = list()
 
@@ -143,6 +145,8 @@ def run_training(
             if training_step >= train_cfg.num_train_steps:
                 break
     
+        epoch += 1
+
     pbar.close()
 
 
