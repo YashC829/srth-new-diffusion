@@ -444,18 +444,21 @@ def main():
     print_ep_info(info)
 
     for ep_dir in tqdm(ep_dirs, desc="Converting episodes"):
-        ep_dir = Path(ep_dir)
+        try:
+            ep_dir = Path(ep_dir)
 
-        for frame in iter_lerobot_frames_from_ep(
-            ep_dir=ep_dir,
-            lerobot_dataset=lerobot_dataset,
-            num_workers=args.num_workers,
-            use_preplace=use_preplace,
-            use_hardlink=not args.no_hardlink,
-        ):
-            lerobot_dataset.add_frame(frame)
+            for frame in iter_lerobot_frames_from_ep(
+                ep_dir=ep_dir,
+                lerobot_dataset=lerobot_dataset,
+                num_workers=args.num_workers,
+                use_preplace=use_preplace,
+                use_hardlink=not args.no_hardlink,
+            ):
+                lerobot_dataset.add_frame(frame)
 
-        lerobot_dataset.save_episode()
+            lerobot_dataset.save_episode()
+        except Exception as e:
+            print(f"Skipping episode directory {ep_dir} due to error: {e}...")
 
     if hasattr(lerobot_dataset, "finalize"):
         lerobot_dataset.finalize()

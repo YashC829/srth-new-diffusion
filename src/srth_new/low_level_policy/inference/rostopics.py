@@ -12,10 +12,12 @@ class ros_topics:
         self._subscriptions = []
         self._topics_with_messages = set()
         self._expected_topics = {
-            "/jhu_daVinci/left/image_raw/compressed",
-            "/jhu_daVinci/right/image_raw/compressed",
-            "/PSM2/endoscope_img/compressed",
-            "/PSM1/endoscope_img/compressed",
+            # NOTE: The passing images via ros2 topics was causing issues. we
+            # will pass images using ZMQ now..
+            # "/jhu_daVinci/left/camera/image_raw/compressed",
+            # "/jhu_daVinci/right/camera/image_raw/compressed",
+            # "/PSM2/endoscope_img/compressed",
+            # "/PSM1/endoscope_img/compressed",
             "/PSM1/setpoint_cp",
             "PSM1/jaw/measured_js",
             "SUJ/PSM1/measured_cp",
@@ -27,10 +29,10 @@ class ros_topics:
         }
         self._all_topics_received_logged = False
 
-        self.usb_image_left = None
-        self.usb_image_right = None
-        self.endo_cam_psm1 = None
-        self.endo_cam_psm2 = None
+        # self.usb_image_left = None
+        # self.usb_image_right = None
+        # self.endo_cam_psm1 = None
+        # self.endo_cam_psm2 = None
         self.psm1_pose = None
         self.psm1_jaw = None
         self.psm1_rcm_pose = None
@@ -51,30 +53,30 @@ class ros_topics:
             reliability=ReliabilityPolicy.RELIABLE,
         )
 
-        self.usb_camera_sub_left = self._create_subscription(
-            "/jhu_daVinci/left/image_raw/compressed",
-            CompressedImage,
-            self.get_camera_image_left,
-            image_qos,
-        )
-        self.usb_camera_sub_right = self._create_subscription(
-            "/jhu_daVinci/right/image_raw/compressed",
-            CompressedImage,
-            self.get_camera_image_right,
-            image_qos,
-        )
-        self.endo_cam_psm1_sub = self._create_subscription(
-            "/PSM2/endoscope_img/compressed",
-            CompressedImage,
-            self.get_endo_cam_psm1,
-            image_qos,
-        )
-        self.endo_cam_psm2_sub = self._create_subscription(
-            "/PSM1/endoscope_img/compressed",
-            CompressedImage,
-            self.get_endo_cam_psm2,
-            image_qos,
-        )
+        # self.usb_camera_sub_left = self._create_subscription(
+        #     "/jhu_daVinci/left/image_raw/compressed",
+        #     CompressedImage,
+        #     self.get_camera_image_left,
+        #     image_qos,
+        # )
+        # self.usb_camera_sub_right = self._create_subscription(
+        #     "/jhu_daVinci/right/image_raw/compressed",
+        #     CompressedImage,
+        #     self.get_camera_image_right,
+        #     image_qos,
+        # )
+        # self.endo_cam_psm1_sub = self._create_subscription(
+        #     "/PSM2/endoscope_img/compressed",
+        #     CompressedImage,
+        #     self.get_endo_cam_psm1,
+        #     image_qos,
+        # )
+        # self.endo_cam_psm2_sub = self._create_subscription(
+        #     "/PSM1/endoscope_img/compressed",
+        #     CompressedImage,
+        #     self.get_endo_cam_psm2,
+        #     image_qos,
+        # )
         self.psm1_sub = self._create_subscription(
             "/PSM1/setpoint_cp",
             PoseStamped,
@@ -159,33 +161,33 @@ class ros_topics:
     def has_received_all_topics(self):
         return len(self.get_missing_topics()) == 0
 
-    def get_camera_image_left(self, data):
-        self._store_topic_value(
-            "/jhu_daVinci/left/image_raw/compressed",
-            "usb_image_left",
-            data,
-        )
+    # def get_camera_image_left(self, data):
+    #     self._store_topic_value(
+    #         "/jhu_daVinci/left/image_raw/compressed",
+    #         "usb_image_left",
+    #         data,
+    #     )
 
-    def get_camera_image_right(self, data):
-        self._store_topic_value(
-            "/jhu_daVinci/right/image_raw/compressed",
-            "usb_image_right",
-            data,
-        )
+    # def get_camera_image_right(self, data):
+    #     self._store_topic_value(
+    #         "/jhu_daVinci/right/image_raw/compressed",
+    #         "usb_image_right",
+    #         data,
+    #     )
 
-    def get_endo_cam_psm1(self, data):
-        self._store_topic_value(
-            "/PSM2/endoscope_img/compressed",
-            "endo_cam_psm1",
-            data,
-        )
+    # def get_endo_cam_psm1(self, data):
+    #     self._store_topic_value(
+    #         "/PSM2/endoscope_img/compressed",
+    #         "endo_cam_psm1",
+    #         data,
+    #     )
 
-    def get_endo_cam_psm2(self, data):
-        self._store_topic_value(
-            "/PSM1/endoscope_img/compressed",
-            "endo_cam_psm2",
-            data,
-        )
+    # def get_endo_cam_psm2(self, data):
+    #     self._store_topic_value(
+    #         "/PSM1/endoscope_img/compressed",
+    #         "endo_cam_psm2",
+    #         data,
+    #     )
 
     def get_ecm_rcm_pose(self, data):
         self._store_topic_value("/SUJ/ECM/measured_cp", "ecm_rcm_pose", data.pose)

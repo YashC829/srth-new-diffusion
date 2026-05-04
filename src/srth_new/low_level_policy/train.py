@@ -1,19 +1,19 @@
 from __future__ import annotations
 
+import logging
+import os
 from pathlib import Path
 
-import os
 import hydra
 import torch
 from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig
 from torch.optim.lr_scheduler import LambdaLR
-import wandb
 from tqdm import tqdm
 
+import wandb
 from srth_new.low_level_policy import utils
 
-import logging
 log = logging.getLogger(__name__)
 
 
@@ -53,6 +53,7 @@ def resume_training_state(
 
     return start_step
 
+
 def log_to_wandb(metrics, summary_prefix, epoch, step):
     # Compute Mean Metrics and Log to WandB and Local Files
     avg_metrics = utils.compute_dict_mean(metrics)
@@ -66,10 +67,17 @@ def validate(cfg: DictConfig):
         raise Exception(
             "wandb.resume=true but train.resume_checkpoint is unset. incompatible behavior"
         )
-    
+
 
 def run_training(
-    train_cfg, policy, train_loader, val_loader, device, optimizer, scheduler, starting_step
+    train_cfg,
+    policy,
+    train_loader,
+    val_loader,
+    device,
+    optimizer,
+    scheduler,
+    starting_step,
 ):
     train_metrics = list()
     val_metrics = list()
@@ -88,8 +96,24 @@ def run_training(
 
         # run training
         for data in train_loader:
-            endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text = utils.collect_data(data, device)
-            forward_dict = policy(endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text)
+            (
+                endoscope_img,
+                lw_img,
+                rw_img,
+                current_pose_data,
+                action_data,
+                is_pad,
+                command_text,
+            ) = utils.collect_data(data, device)
+            forward_dict = policy(
+                endoscope_img,
+                lw_img,
+                rw_img,
+                current_pose_data,
+                action_data,
+                is_pad,
+                command_text,
+            )
 
             loss = forward_dict["loss"]
             loss.backward()
@@ -110,15 +134,31 @@ def run_training(
                     val_batches = 0
                     val_sample_size = min(1000, len(val_loader))
                     for data in val_loader:
-                        endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text = utils.collect_data(data, device)
-                        forward_dict = policy(endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text)
+                        (
+                            endoscope_img,
+                            lw_img,
+                            rw_img,
+                            current_pose_data,
+                            action_data,
+                            is_pad,
+                            command_text,
+                        ) = utils.collect_data(data, device)
+                        forward_dict = policy(
+                            endoscope_img,
+                            lw_img,
+                            rw_img,
+                            current_pose_data,
+                            action_data,
+                            is_pad,
+                            command_text,
+                        )
 
                         val_metrics.append(utils.detach_dict(forward_dict))
                         val_batches += 1
 
                         if val_batches >= val_sample_size:
                             break
-                
+
                 # log to wandb and clear out metrics
                 log_to_wandb(train_metrics, "train", epoch, training_step)
                 log_to_wandb(val_metrics, "val", epoch, training_step)
@@ -131,7 +171,9 @@ def run_training(
             # Save Checkpoints
             if training_step % train_cfg.save_every == 0:
                 os.makedirs(train_cfg.checkpoint_dir, exist_ok=True)
-                ckpt_path = Path(train_cfg.checkpoint_dir).joinpath(f"train_step_{training_step}.ckpt")
+                ckpt_path = Path(train_cfg.checkpoint_dir).joinpath(
+                    f"train_step_{training_step}.ckpt"
+                )
                 torch.save(
                     {
                         "policy_state": policy.serialize(),
@@ -139,18 +181,20 @@ def run_training(
                         "scheduler_state_dict": scheduler.state_dict(),
                         "step": training_step,
                     },
-                    ckpt_path
+                    ckpt_path,
                 )
 
             if training_step >= train_cfg.num_train_steps:
                 break
-    
+
         epoch += 1
 
     pbar.close()
 
 
-@hydra.main(version_base=None, config_path="../../../conf/low_level_policy", config_name="train")
+@hydra.main(
+    version_base=None, config_path="../../../conf/low_level_policy", config_name="train"
+)
 def main(cfg: DictConfig) -> None:
     validate(cfg)
     cfg = utils.wandb_setup(cfg)
@@ -162,11 +206,20 @@ def main(cfg: DictConfig) -> None:
     optimizer = policy.configure_optimizers()
     scheduler = utils.get_cosine_schedule_with_warmup(
         optimizer,
-        num_warmup_steps=cfg.train.num_warmup_steps, 
-        num_training_steps=cfg.train.num_train_steps
+        num_warmup_steps=cfg.train.num_warmup_steps,
+        num_training_steps=cfg.train.num_train_steps,
     )
     start_step = resume_training_state(cfg.train, policy, scheduler, device)
-    run_training(cfg.train, policy, train_loader, val_loader, device, optimizer, scheduler, start_step)
+    run_training(
+        cfg.train,
+        policy,
+        train_loader,
+        val_loader,
+        device,
+        optimizer,
+        scheduler,
+        start_step,
+    )
 
 
 if __name__ == "__main__":

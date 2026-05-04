@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 
@@ -6,7 +7,9 @@ from einops import rearrange
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import zmq
 
+from srth_new.general import constants
 from srth_new.low_level_policy.inference.gui import run_inference_gui
 from srth_new.low_level_policy.models.act_model import ACTPolicy
 
@@ -19,6 +22,9 @@ from std_msgs.msg import Bool
 import logging
 log = logging.getLogger(__name__)
 
+DVRK_COMPUTER_IP = os.environ.get("DVRK_COMPUTER_IP")
+if DVRK_COMPUTER_IP is None:
+    raise Exception(f"Must set dvrk computer IP address with: export DVRK_COMPUTER_IP=<ip_addr>")
 
 class LowLevelPolicy:
 
@@ -45,6 +51,7 @@ class LowLevelPolicy:
             request_reprediction=False,
         )
         self.init_ros()
+        self.init_image_stream()
         
     def init_threading_params(self):
         self._manual_pause = self.enable_gui and self.start_paused
@@ -69,6 +76,38 @@ class LowLevelPolicy:
             self.pause_robot_callback,
             10,
         )
+
+    def image_receiver_thread(self):
+
+        ctx = zmq.Context()
+        sock = ctx.socket(zmq.SUB)
+        sock.connect(f"tcp://{DVRK_COMPUTER_IP}:5555")
+        sock.setsockopt(zmq.RCVHWM, 10)  # allow small buffer per stream
+
+        self.image_frames = {
+            constants.LEFT_ENDOSCOPE_TOPIC: None,
+            constants.RIGHT_ENDOSCOPE_TOPIC: None,
+            constants.PSM1_WRIST_CAMERA_TOPIC: None,
+            constants.PSM2_WRIST_CAMERA_TOPIC: None,
+        }
+
+        for stream_name in self.image_frames.keys():
+            sock.setsockopt_string(zmq.SUBSCRIBE, stream_name)
+
+        while True:
+            topic, data = sock.recv_multipart()
+            topic = topic.decode()
+            frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+            if frame is not None:
+                self.image_frames[topic] = frame
+
+        sock.close()
+
+    def has_received_all_image_frames(self):
+        for _, frame in self.image_frames.items():
+            if frame == None:
+                return False
+        return True
 
     ## --------------------- callbacks -----------------------
     
@@ -261,20 +300,31 @@ class LowLevelPolicy:
         return image
     
     def get_image_dvrk(self):
-        self.left_img = self._decode_compressed_image(self.rt.usb_image_left)
-        self.left_img = cv2.resize(self.left_img, (480, 360))
-        self.left_img = cv2.cvtColor(self.left_img, cv2.COLOR_BGR2RGB)
-        self.left_img = rearrange(self.left_img, 'h w c -> c h w')
 
-        self.psm2_img = self._decode_compressed_image(self.rt.endo_cam_psm2)
-        self.psm2_img = cv2.resize(self.psm2_img, (480, 360))
-        self.psm2_img = cv2.cvtColor(self.psm2_img, cv2.COLOR_BGR2RGB)
-        self.psm2_img = rearrange(self.psm2_img, 'h w c -> c h w')
+        # NOTE: This is the code that worked in ros1. this should work in ros2, but
+        # there seemed to be some odd network issues. Leaving this here for
+        # reference just in case
+        # self.left_img = self._decode_compressed_image(self.rt.usb_image_left)
+        # self.left_img = cv2.resize(self.left_img, (480, 360))
+        # self.left_img = cv2.cvtColor(self.left_img, cv2.COLOR_BGR2RGB)
+        # self.left_img = rearrange(self.left_img, 'h w c -> c h w')
 
-        self.psm1_img = self._decode_compressed_image(self.rt.endo_cam_psm1)
-        self.psm1_img = cv2.resize(self.psm1_img, (480, 360))
-        self.psm1_img = cv2.cvtColor(self.psm1_img, cv2.COLOR_BGR2RGB)
-        self.psm1_img = rearrange(self.psm1_img, 'h w c -> c h w')
+        # self.psm2_img = self._decode_compressed_image(self.rt.endo_cam_psm2)
+        # self.psm2_img = cv2.resize(self.psm2_img, (480, 360))
+        # self.psm2_img = cv2.cvtColor(self.psm2_img, cv2.COLOR_BGR2RGB)
+        # self.psm2_img = rearrange(self.psm2_img, 'h w c -> c h w')
+
+        # self.psm1_img = self._decode_compressed_image(self.rt.endo_cam_psm1)
+        # self.psm1_img = cv2.resize(self.psm1_img, (480, 360))
+        # self.psm1_img = cv2.cvtColor(self.psm1_img, cv2.COLOR_BGR2RGB)
+        # self.psm1_img = rearrange(self.psm1_img, 'h w c -> c h w')
+
+        # NOTE: This is the new code using ZMQ
+        self.left_img = self.image_frames[constants.LEFT_ENDOSCOPE_TOPIC]
+        self.psm2_img = self.image_frames[constants.PSM2_WRIST_CAMERA_TOPIC]
+        self.psm1_img = self.image_frames[constants.PSM1_WRIST_CAMERA_TOPIC]
+
+        assert self.left_img is not None and self.psm2_img is not None and self.psm1_img is not None
 
         curr_image = np.stack([self.left_img, self.psm2_img, self.psm1_img], axis=0)
         curr_image = torch.from_numpy(curr_image / 255.0).float().cuda().unsqueeze(0)
@@ -410,6 +460,11 @@ class LowLevelPolicy:
 
                 sleep_duration = max(0.0, next_log_time - time.monotonic())
                 time.sleep(min(0.1, sleep_duration))
+            while not self.has_received_all_image_frames():
+                log.error(
+                    "Waiting for subscribed ZMQ topics to receive their first frame. Missing topics:\n%s",
+                    "\n".join(f"  - {topic}" for topic, frame in self.image_frames.items() if frame == None)
+                )
         except KeyboardInterrupt:
             log.info("low level policy interrupted while waiting for ROS topics")
             self._shutdown_event.set()

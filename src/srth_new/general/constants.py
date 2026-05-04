@@ -112,6 +112,12 @@ CHOLECYSTECTOMY_FEATURES={
     },
 }
 
+# ros2 topics
+LEFT_ENDOSCOPE_TOPIC = "/jhu_daVinci/left/camera/image_raw/compressed"
+RIGHT_ENDOSCOPE_TOPIC = "/jhu_daVinci/right/camera/image_raw/compressed"
+PSM1_WRIST_CAMERA_TOPIC = "/PSM1/endoscope_img/compressed"
+PSM2_WRIST_CAMERA_TOPIC = "/PSM2/endoscope_img/compressed"
+
 # the below maps valid high level phases to sets of corresponding valid low
 # level phases
 PHASES = {
