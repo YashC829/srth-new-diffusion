@@ -151,6 +151,8 @@ class example_application:
 
         # create a new goal starting with current position
         initial_cartesian_position = PyKDL.Frame()
+        import pdb
+        pdb.set_trace()
         initial_cartesian_position.p = self.arm.setpoint_cp().p
         initial_cartesian_position.M = self.arm.setpoint_cp().M
         goal = PyKDL.Frame()

@@ -15,7 +15,7 @@ from srth_new.low_level_policy.models.act_model import ACTPolicy
 
 # From ros packages
 import crtk
-from srth_new.low_level_policy.inference.dvrk_control import example_application
+from srth_new.low_level_policy.inference.dvrk_control_ros2 import example_application
 from srth_new.low_level_policy.inference.rostopics import ros_topics
 from std_msgs.msg import Bool
 
@@ -51,7 +51,20 @@ class LowLevelPolicy:
             request_reprediction=False,
         )
         self.init_ros()
-        self.init_image_stream()
+        
+        # zmq initialization
+        self.image_frames = {
+            constants.LEFT_ENDOSCOPE_TOPIC: None,
+            constants.RIGHT_ENDOSCOPE_TOPIC: None,
+            constants.PSM1_WRIST_CAMERA_TOPIC: None,
+            constants.PSM2_WRIST_CAMERA_TOPIC: None,
+        }
+        self.frame_lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(target=self.receiver_thread, daemon=True)
+        self.thread.start()
+
+        self.windows = {}
         
     def init_threading_params(self):
         self._manual_pause = self.enable_gui and self.start_paused
@@ -77,37 +90,46 @@ class LowLevelPolicy:
             10,
         )
 
-    def image_receiver_thread(self):
+    def visualize_zmq_imgs(self):
 
+        with self.frame_lock:
+            frames_snapshot = {k: v.copy() if v is not None else None for k, v in self.image_frames.items()}
+
+        for topic, frame in frames_snapshot.items():
+            if frame is not None:
+                if topic not in self.windows:
+                    cv2.namedWindow(topic, cv2.WINDOW_NORMAL)
+                    self.windows[topic] = True
+                cv2.imshow(topic, frame)
+                
+                cv2.waitKey(1)  # <-- REQUIRED
+
+    def receiver_thread(self):
         ctx = zmq.Context()
         sock = ctx.socket(zmq.SUB)
         sock.connect(f"tcp://{DVRK_COMPUTER_IP}:5555")
-        sock.setsockopt(zmq.RCVHWM, 10)  # allow small buffer per stream
+        sock.setsockopt(zmq.CONFLATE, 1)
+        sock.setsockopt(zmq.RCVHWM, 1)
 
-        self.image_frames = {
-            constants.LEFT_ENDOSCOPE_TOPIC: None,
-            constants.RIGHT_ENDOSCOPE_TOPIC: None,
-            constants.PSM1_WRIST_CAMERA_TOPIC: None,
-            constants.PSM2_WRIST_CAMERA_TOPIC: None,
-        }
+        for topic in self.image_frames:
+            sock.setsockopt_string(zmq.SUBSCRIBE, topic)
 
-        for stream_name in self.image_frames.keys():
-            sock.setsockopt_string(zmq.SUBSCRIBE, stream_name)
+        poller = zmq.Poller()
+        poller.register(sock, zmq.POLLIN)
 
-        while True:
-            topic, data = sock.recv_multipart()
-            topic = topic.decode()
-            frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-            if frame is not None:
-                self.image_frames[topic] = frame
+        while not self.stop_event.is_set():
+            events = dict(poller.poll(timeout=100))
+            if sock in events:
+                topic, data = sock.recv_multipart()
+                topic = topic.decode()
+                frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+                if frame is not None:
+                    with self.frame_lock:
+                        self.image_frames[topic] = frame
 
         sock.close()
+        ctx.term()
 
-    def has_received_all_image_frames(self):
-        for _, frame in self.image_frames.items():
-            if frame == None:
-                return False
-        return True
 
     ## --------------------- callbacks -----------------------
     
@@ -319,16 +341,21 @@ class LowLevelPolicy:
         # self.psm1_img = cv2.cvtColor(self.psm1_img, cv2.COLOR_BGR2RGB)
         # self.psm1_img = rearrange(self.psm1_img, 'h w c -> c h w')
 
-        # NOTE: This is the new code using ZMQ
-        self.left_img = self.image_frames[constants.LEFT_ENDOSCOPE_TOPIC]
-        self.psm2_img = self.image_frames[constants.PSM2_WRIST_CAMERA_TOPIC]
-        self.psm1_img = self.image_frames[constants.PSM1_WRIST_CAMERA_TOPIC]
+        self.visualize_zmq_imgs()
 
-        assert self.left_img is not None and self.psm2_img is not None and self.psm1_img is not None
+        with self.frame_lock:
+            left_img = self.image_frames[constants.LEFT_ENDOSCOPE_TOPIC]
+            psm2_img = self.image_frames[constants.PSM2_WRIST_CAMERA_TOPIC]
+            psm1_img = self.image_frames[constants.PSM1_WRIST_CAMERA_TOPIC]
 
-        curr_image = np.stack([self.left_img, self.psm2_img, self.psm1_img], axis=0)
+        left_img = torch.from_numpy(left_img.transpose(2, 0, 1)).cuda().unsqueeze(0)
+        psm2_img = torch.from_numpy(psm2_img.transpose(2, 0, 1)).cuda().unsqueeze(0)
+        psm1_img = torch.from_numpy(psm1_img.transpose(2, 0, 1)).cuda().unsqueeze(0)
+
+        return left_img, psm2_img, psm1_img
+
+        curr_image = np.stack([left_img, psm2_img, psm1_img], axis=0)
         curr_image = torch.from_numpy(curr_image / 255.0).float().cuda().unsqueeze(0)
-        
         return curr_image
 
     def get_current_pose(self):
@@ -362,11 +389,11 @@ class LowLevelPolicy:
         return current_pose, qpos_psm1, qpos_psm2
 
     def predict_actions(self):
-        curr_image = self.get_image_dvrk()
+        endo_img, lw_img, rw_img = self.get_image_dvrk()
         current_pose, _, _ = self.get_current_pose()
         _, _, _, _, command = self.get_runtime_controls()
         action = (
-            self.policy(curr_image, current_pose, command_text=command)
+            self.policy(endo_img, lw_img, rw_img, current_pose, command_text=command)
             .cpu()
             .numpy()
             .squeeze(0)
@@ -437,7 +464,10 @@ class LowLevelPolicy:
         self._execution_thread.start()
 
 
+    def wait_for_zmq_imgs(self):
 
+        while None in list(self.image_frames.values()):
+            log.info(f"Waiting for ZMQ image topics: {", ".join([k for k, v in self.image_frames.items() if v is None])}")
 
     ## --------------------- main loop -----------------------
 
@@ -460,11 +490,9 @@ class LowLevelPolicy:
 
                 sleep_duration = max(0.0, next_log_time - time.monotonic())
                 time.sleep(min(0.1, sleep_duration))
-            while not self.has_received_all_image_frames():
-                log.error(
-                    "Waiting for subscribed ZMQ topics to receive their first frame. Missing topics:\n%s",
-                    "\n".join(f"  - {topic}" for topic, frame in self.image_frames.items() if frame == None)
-                )
+
+            self.wait_for_zmq_imgs()
+            
         except KeyboardInterrupt:
             log.info("low level policy interrupted while waiting for ROS topics")
             self._shutdown_event.set()
