@@ -171,26 +171,20 @@ class example_application:
     #         print("servoed jaw")
 
     def run_full_pose_goal(self, wp, jaw_angle=None):
-        jaw_diff_thres = 0.3
         goal = PyKDL.Frame()
         goal.p = PyKDL.Vector(wp[0], wp[1], wp[2])
         goal.M = PyKDL.Rotation.Quaternion(wp[3], wp[4], wp[5], wp[6])
 
         self.arm.servo_cp(goal)
 
-        # self.arm.jaw.servo_jp(np.array([wp[-1]]))
-        # print(jaw_angle.position[0])
-        # print(f"Desired jaw: {wp[-1]}, Current jaw: {jaw_angle.position[0] if jaw_angle is not None else 'N/A'}")
-        jaw_diff = abs(wp[-1] - jaw_angle.position[0]) if jaw_angle is not None else 0
-        # print(f"Moving jaw towards target. Current: {jaw_angle.position[0]}, Target: {wp[-1]}")
-        if abs(jaw_diff) > jaw_diff_thres:
-            jaw_angle.position[0] = wp[-1] + jaw_diff_thres * np.sign(jaw_diff) # Move in the direction of the target but only by the threshold amount
-        # self.arm.jaw.open(angle=wp[-1])
+        if jaw_angle is not None:
+            jaw_diff_thres = 0.3
+            jaw_diff = abs(wp[-1] - jaw_angle.position[0])
+            if abs(jaw_diff) > jaw_diff_thres:
+                # Move in the direction of the target but only by the threshold amount
+                jaw_angle.position[0] = wp[-1] + jaw_diff_thres * np.sign(jaw_diff)
 
-        # else:
-            # jaw_position[0] = wp[-1]
-        self.arm.jaw.servo_jp(np.array([wp[-1]]))
-        # print("servoed jaw")
+            self.arm.jaw.servo_jp(np.array([wp[-1]]))
 
     def run_jaw_servo(self):
         self.node.get_logger().info('Starting jaw servo')

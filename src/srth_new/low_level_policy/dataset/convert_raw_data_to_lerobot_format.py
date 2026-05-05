@@ -17,6 +17,18 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from srth_new.general import constants
 from srth_new.general.utils import dataset
 
+import contextlib
+
+@contextlib.contextmanager
+def suppress_stderr():
+    with open(os.devnull, 'w') as devnull:
+        old_stderr = os.dup(2)
+        os.dup2(devnull.fileno(), 2)
+        try:
+            yield
+        finally:
+            os.dup2(old_stderr, 2)
+            os.close(old_stderr)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Create LeRobot dataset")
@@ -27,8 +39,38 @@ def parse_args():
     parser.add_argument("--no-hardlink", action="store_true")
     parser.add_argument("--disable-preplace", action="store_true")
     parser.add_argument("--batch-encoding-size", type=int, default=1)
+    parser.add_argument("--max-retries", type=int, default=3)
     return parser.parse_args()
 
+
+def flush_image_writer(lerobot_dataset):
+    if lerobot_dataset.image_writer is not None:
+        if hasattr(lerobot_dataset.image_writer, 'queue'):
+            lerobot_dataset.image_writer.queue.join()
+
+
+def validate_episode_images(lerobot_dataset, episode_index: int, num_frames: int):
+    image_keys = [
+        "images.endoscope.left",
+        "images.endoscope.right",
+        "images.wrist.left",
+        "images.wrist.right",
+    ]
+    bad = []
+    for image_key in image_keys:
+        for frame_idx in range(num_frames):
+            p = lerobot_dataset._get_image_file_path(
+                episode_index=episode_index,
+                image_key=image_key,
+                frame_index=frame_idx,
+            )
+            if not valid_image(p):
+                bad.append(p)
+    if bad:
+        raise RuntimeError(
+            f"Episode {episode_index} has {len(bad)} invalid/missing image files "
+            f"before save_episode(). First bad path: {bad[0]}"
+        )
 
 def delete_hf_dataset(repo_id: str):
     hf_home = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
@@ -54,6 +96,57 @@ def print_ep_info(info):
     print("Dataset Episode Information:")
     print(json.dumps(info, indent=2))
     print("-" * 100 + "\n")
+
+
+def valid_image(path: Path) -> bool:
+    path = Path(path)
+
+    if not path.exists():
+        return False
+
+    try:
+        if path.stat().st_size == 0:
+            return False
+
+        with Image.open(path) as img:
+            img.verify()
+
+        return True
+
+    except Exception:
+        return False
+
+
+def clear_episode_buffer(lerobot_dataset):
+    if hasattr(lerobot_dataset, "clear_episode_buffer"):
+        lerobot_dataset.clear_episode_buffer()
+        return
+
+    if hasattr(lerobot_dataset, "episode_buffer"):
+        if hasattr(lerobot_dataset, "create_episode_buffer"):
+            lerobot_dataset.episode_buffer = lerobot_dataset.create_episode_buffer()
+        else:
+            lerobot_dataset.episode_buffer = None
+
+
+def clear_lerobot_episode_files(lerobot_dataset, episode_index: int):
+    image_keys = [
+        "images.endoscope.left",
+        "images.endoscope.right",
+        "images.wrist.left",
+        "images.wrist.right",
+    ]
+
+    for image_key in image_keys:
+        try:
+            p = lerobot_dataset._get_image_file_path(
+                episode_index=episode_index,
+                image_key=image_key,
+                frame_index=0,
+            )
+            shutil.rmtree(p.parent, ignore_errors=True)
+        except Exception:
+            pass
 
 
 def parse_ts_from_img_file_name(name: str) -> np.int64:
@@ -197,10 +290,6 @@ def load_frame_images(paths):
 
 
 def patch_fast_image_handling(lerobot_dataset):
-    """
-    Allows pre-placed .jpg hardlinks to be reused by LeRobot instead of decoding
-    source JPEGs and re-saving intermediate images.
-    """
     try:
         import lerobot.datasets.image_writer as iw
     except Exception:
@@ -223,8 +312,12 @@ def patch_fast_image_handling(lerobot_dataset):
 
     def _save_image_skip_existing(self, image, fpath: Path, compress_level=None) -> None:
         fpath = Path(fpath)
-        if fpath.exists():
+
+        if valid_image(fpath):
             return
+
+        if fpath.exists():
+            fpath.unlink()
 
         if compress_level is None:
             original_save_image(image, fpath)
@@ -251,8 +344,13 @@ def patch_fast_image_handling(lerobot_dataset):
 
         def _write_image_skip_existing(image, fpath: Path):
             fpath = Path(fpath)
-            if fpath.exists():
+
+            if valid_image(fpath):
                 return
+
+            if fpath.exists():
+                fpath.unlink()
+
             original_write_image(image, fpath)
 
         iw.write_image = _write_image_skip_existing
@@ -261,17 +359,36 @@ def patch_fast_image_handling(lerobot_dataset):
 def hardlink_or_copy(src: str, dst: Path, use_hardlink: bool):
     dst.parent.mkdir(parents=True, exist_ok=True)
 
-    if dst.exists():
+    if valid_image(dst):
         return
+
+    if dst.exists():
+        dst.unlink()
 
     if use_hardlink:
         try:
             os.link(src, dst)
-            return
+
+            if valid_image(dst):
+                return
+
+            dst.unlink(missing_ok=True)
+
         except OSError:
             pass
 
-    shutil.copy2(src, dst)
+    tmp = dst.with_name(dst.name + ".tmp")
+
+    if tmp.exists():
+        tmp.unlink()
+
+    shutil.copy2(src, tmp)
+
+    if not valid_image(tmp):
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"Invalid copied image: {src} -> {dst}")
+
+    os.replace(tmp, dst)
 
 
 def preplace_episode_images(
@@ -361,6 +478,7 @@ def iter_lerobot_frames_from_ep(
 
     if use_preplace:
         episode_index = lerobot_dataset.meta.total_episodes
+
         preplace_episode_images(
             lerobot_dataset=lerobot_dataset,
             episode_index=episode_index,
@@ -418,14 +536,32 @@ def create_lerobot_dataset(args):
     try:
         return LeRobotDataset.create(**kwargs)
     except TypeError:
-        # For older/newer LeRobot versions that do not support every kwarg.
         kwargs.pop("image_writer_processes", None)
         kwargs.pop("batch_encoding_size", None)
+
         try:
             return LeRobotDataset.create(**kwargs)
         except TypeError:
             kwargs.pop("image_writer_threads", None)
             return LeRobotDataset.create(**kwargs)
+
+
+def convert_one_episode(ep_dir, lerobot_dataset, args, use_preplace):
+    frame_count = 0
+    for frame in iter_lerobot_frames_from_ep(
+        ep_dir=ep_dir,
+        lerobot_dataset=lerobot_dataset,
+        num_workers=args.num_workers,
+        use_preplace=use_preplace,
+        use_hardlink=not args.no_hardlink,
+    ):
+        lerobot_dataset.add_frame(frame)
+        frame_count += 1
+
+    episode_index = lerobot_dataset.meta.total_episodes
+    validate_episode_images(lerobot_dataset, episode_index, frame_count)
+
+    lerobot_dataset.save_episode()
 
 
 def main():
@@ -437,28 +573,64 @@ def main():
     lerobot_dataset = create_lerobot_dataset(args)
 
     use_preplace = not args.disable_preplace
+
     if use_preplace:
         patch_fast_image_handling(lerobot_dataset)
 
     ep_dirs, info = dataset.get_all_episode_directories(args.source_dir)
     print_ep_info(info)
 
+    skipped_eps = []
+
     for ep_dir in tqdm(ep_dirs, desc="Converting episodes"):
-        try:
-            ep_dir = Path(ep_dir)
+        ep_dir = Path(ep_dir)
 
-            for frame in iter_lerobot_frames_from_ep(
-                ep_dir=ep_dir,
-                lerobot_dataset=lerobot_dataset,
-                num_workers=args.num_workers,
-                use_preplace=use_preplace,
-                use_hardlink=not args.no_hardlink,
-            ):
-                lerobot_dataset.add_frame(frame)
+        for attempt in range(1, args.max_retries + 1):
+            episode_index = lerobot_dataset.meta.total_episodes
 
-            lerobot_dataset.save_episode()
-        except Exception as e:
-            print(f"Skipping episode directory {ep_dir} due to error: {e}...")
+            try:
+                clear_episode_buffer(lerobot_dataset)
+                clear_lerobot_episode_files(lerobot_dataset, episode_index)
+
+                with suppress_stderr():
+                    convert_one_episode(
+                        ep_dir=ep_dir,
+                        lerobot_dataset=lerobot_dataset,
+                        args=args,
+                        use_preplace=use_preplace,
+                    )
+
+                break
+
+            except Exception as e:
+                print(
+                    "\n"
+                    f"Failed source episode: {ep_dir}\n"
+                    f"LeRobot episode index: {episode_index}\n"
+                    f"Attempt: {attempt}/{args.max_retries}\n"
+                    f"Error: {repr(e)}"
+                )
+
+                flush_image_writer(lerobot_dataset)
+                clear_episode_buffer(lerobot_dataset)
+                clear_lerobot_episode_files(lerobot_dataset, episode_index)
+
+                if attempt == args.max_retries:
+                    print(
+                        "\n"
+                        f"Skipping source episode after "
+                        f"{args.max_retries} failed attempts:\n"
+                        f"{ep_dir}\n"
+                    )
+                    skipped_eps.append(str(ep_dir))
+                    break
+
+                print(f"Retrying same source episode: {ep_dir}")
+
+    if skipped_eps:
+        print("\nSkipped episodes:")
+        for ep in skipped_eps:
+            print(f"  {ep}")
 
     if hasattr(lerobot_dataset, "finalize"):
         lerobot_dataset.finalize()
