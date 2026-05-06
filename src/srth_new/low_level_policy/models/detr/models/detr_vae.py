@@ -2,14 +2,20 @@
 """
 DETR model and criterion classes.
 """
+
+import IPython
+import numpy as np
 import torch
 from torch import nn
 from torch.autograd import Variable
-import numpy as np
-from .backbone import build_image_backbone
-from .transformer import build_transformer, TransformerEncoder, TransformerEncoderLayer, build_transformer_decoder
 
-import IPython
+from .backbone import build_image_backbone
+from .transformer import (
+    TransformerEncoder,
+    TransformerEncoderLayer,
+    build_transformer,
+    build_transformer_decoder,
+)
 
 e = IPython.embed
 
@@ -37,18 +43,19 @@ def get_sinusoid_encoding_table(n_position, d_hid):
 
 
 class DETRVAE_Decoder(nn.Module):
-    """ This is the decoder only transformer """
+    """This is the decoder only transformer"""
+
     def __init__(
-        self, 
+        self,
         backbones,
         transformer_decoder,
         state_dim,
         num_queries,
-        camera_names, 
+        camera_names,
         action_dim,
         use_language=False,
         use_film=False,
-        ):
+    ):
         super().__init__()
         self.num_queries = num_queries
         self.camera_names = camera_names
@@ -67,9 +74,10 @@ class DETRVAE_Decoder(nn.Module):
                 768, hidden_dim
             )  # 512 / 768 for clip / distilbert
 
-
         if backbones is not None:
-            self.input_proj = nn.Conv2d(backbones[0].num_channels, hidden_dim, kernel_size=1)
+            self.input_proj = nn.Conv2d(
+                backbones[0].num_channels, hidden_dim, kernel_size=1
+            )
             self.backbones = nn.ModuleList(backbones)
             # self.input_proj_robot_state = nn.Linear(state_dim, hidden_dim)
         else:
@@ -79,10 +87,13 @@ class DETRVAE_Decoder(nn.Module):
             self.pos = torch.nn.Embedding(2, hidden_dim)
             self.backbones = None
         # encoder extra parameters
-        self.register_buffer('pos_table', get_sinusoid_encoding_table(1+1+num_queries, hidden_dim)) # [CLS], qpos, a_seq
-        self.additional_pos_embed = nn.Embedding(1, hidden_dim) # learned position embedding for proprio and latent
+        self.register_buffer(
+            "pos_table", get_sinusoid_encoding_table(1 + 1 + num_queries, hidden_dim)
+        )  # [CLS], qpos, a_seq
+        self.additional_pos_embed = nn.Embedding(
+            1, hidden_dim
+        )  # learned position embedding for proprio and latent
 
-          
     def forward(self, image, actions=None, is_pad=None, command_embedding=None):
 
         # Project the command embedding to the required dimension
@@ -96,7 +107,7 @@ class DETRVAE_Decoder(nn.Module):
         #     image_future = image[:,len(self.camera_names):].clone()
         #     image = image[:,:len(self.camera_names)].clone()
 
-        if len(self.backbones)>1:
+        if len(self.backbones) > 1:
             # Image observation features and position embeddings
             all_cam_features = []
             all_cam_pos = []
@@ -108,7 +119,7 @@ class DETRVAE_Decoder(nn.Module):
                     )
                 else:
                     features, pos = self.backbones[cam_id](image[:, cam_id])
-                features = features[0] # take the last layer feature
+                features = features[0]  # take the last layer feature
                 pos = pos[0]
                 all_cam_features.append(self.input_proj(features))
                 all_cam_pos.append(pos)
@@ -117,18 +128,27 @@ class DETRVAE_Decoder(nn.Module):
             all_cam_pos = []
             bs = image.shape[0]
             features, pos = self.backbones[0](
-                image.reshape([-1,3,image.shape[-2],image.shape[-1]]), command_embedding
-                )
-            project_feature = self.input_proj(features[0]) 
-            project_feature = project_feature.reshape([bs, self.cam_num,project_feature.shape[1],project_feature.shape[2],project_feature.shape[3]])
+                image.reshape([-1, 3, image.shape[-2], image.shape[-1]]),
+                command_embedding,
+            )
+            project_feature = self.input_proj(features[0])
+            project_feature = project_feature.reshape(
+                [
+                    bs,
+                    self.cam_num,
+                    project_feature.shape[1],
+                    project_feature.shape[2],
+                    project_feature.shape[3],
+                ]
+            )
             for i in range(self.cam_num):
-                all_cam_features.append(project_feature[:,i,:])
+                all_cam_features.append(project_feature[:, i, :])
                 all_cam_pos.append(pos[0])
         # proprioception features
         # proprio_input = self.input_proj_robot_state(qpos) #B, 512
         # fold camera dimension into width dimension
-        src = torch.cat(all_cam_features, axis=3) #B, 512,12,26
-        pos = torch.cat(all_cam_pos, axis=3) #B, 512,12,26
+        src = torch.cat(all_cam_features, axis=3)  # B, 512,12,26
+        pos = torch.cat(all_cam_pos, axis=3)  # B, 512,12,26
         # Only append the command embedding if we are using one-hot
         command_embedding_to_append = (
             command_embedding_proj if self.use_language else None
@@ -140,13 +160,13 @@ class DETRVAE_Decoder(nn.Module):
             pos_embed=pos,
             additional_pos_embed=self.additional_pos_embed.weight,
             command_embedding=command_embedding_to_append,
-        ) #B, chunk_size, 512
+        )  # B, chunk_size, 512
 
         # Print the shape of hs
         # print("Shape of hs:", hs.shape)
 
         # a_hat = self.action_head(hs) #B, chunk_size, action_dim
-        hs_action = hs[:,-1*self.num_queries:,:].clone() #B, action_dim, 512
+        hs_action = hs[:, -1 * self.num_queries :, :].clone()  # B, action_dim, 512
         # hs_img = hs[:,1:-1*self.num_queries,:].clone() #B, image_feature_dim, 512 #final image feature
         # hs_proprio = hs[:,[0],:].clone() #B, proprio_feature_dim, 512
         a_hat = self.action_head(hs_action)
@@ -156,7 +176,7 @@ class DETRVAE_Decoder(nn.Module):
         #     src_future = torch.cat(all_cam_features_future, axis=3) #B, 512,12,26
         #     src_future = src_future.flatten(2).permute(2, 0, 1).transpose(1, 0) # B, 12*26, 512
         #     hs_img = {'hs_img': hs_img, 'src_future': src_future}
-            
+
         return a_hat
 
 
@@ -173,7 +193,6 @@ class DETRVAE(nn.Module):
         camera_names,
         use_language=False,
         use_film=False,
-        num_command=2,
     ):
         """Initializes the model.
         Parameters:
@@ -220,7 +239,9 @@ class DETRVAE(nn.Module):
         self.encoder_action_proj = nn.Linear(
             self.input_size, hidden_dim
         )  # project action to embedding
-        self.encoder_joint_proj = nn.Linear(self.input_size, hidden_dim)  # project qpos to embedding
+        self.encoder_joint_proj = nn.Linear(
+            self.input_size, hidden_dim
+        )  # project qpos to embedding
         self.latent_proj = nn.Linear(
             hidden_dim, self.latent_dim * 2
         )  # project hidden state to latent std, var
@@ -435,7 +456,7 @@ def build_encoder(args):
 
 
 def build(args):
-    
+
     state_dim = args.action_dim  # TODO hardcode
     print("model type", args.model_type)
     # From image
@@ -444,7 +465,7 @@ def build(args):
         backbone = build_image_backbone(args)
         backbones.append(backbone)
 
-    if args.model_type=="ACT":
+    if args.model_type == "ACT":
         transformer = build_transformer(args)
 
         encoder = build_encoder(args)
@@ -459,7 +480,7 @@ def build(args):
             use_language=args.use_language,
             use_film="film" in args.backbone,
         )
-    elif args.model_type=="SRT":
+    elif args.model_type == "SRT":
         transformer_decoder = build_transformer_decoder(args)
         print("use language:", args.use_language)
         model = DETRVAE_Decoder(

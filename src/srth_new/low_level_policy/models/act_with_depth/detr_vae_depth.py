@@ -55,7 +55,9 @@ class DETRVAEDepth(nn.Module):
         self.input_proj = nn.Conv2d(
             backbones[0].num_channels, hidden_dim, kernel_size=1
         )
-        self.depth_1d_to_3d_proj = nn.Conv2d(in_channels=1, out_channels=3, kernel_size=1)
+        self.depth_1d_to_3d_proj = nn.Conv2d(
+            in_channels=1, out_channels=3, kernel_size=1
+        )
         self.depth_input_proj = nn.Conv2d(
             depth_backbone.num_channels, hidden_dim, kernel_size=1
         )
@@ -103,7 +105,7 @@ class DETRVAEDepth(nn.Module):
         env_state,
         actions=None,
         is_pad=None,
-        command_embedding=None
+        command_embedding=None,
     ):
         """Forward pass.
 

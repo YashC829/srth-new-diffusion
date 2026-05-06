@@ -5,12 +5,16 @@ lr: 1e-5
 kl_weight: 10
 weight_decay: 1e-4
 camera_names: ["left", "left_wrist", "right_wrist"] # Expected image streams in each sample.
-num_queries: 60                                     # Usually should match the dataset chunk size.
-action_dim: 20                                   # Number of action dimensions predicted per timestep.
+num_queries: ${ll_future_chunk_size} # Usually should match the dataset chunk size.
+action_dim: 20 # Number of action dimensions predicted per timestep.
 action_mode: ${..action_mode}
 norm_scheme: std
-use_language: true                      # Whether the policy conditions on language text.
-language_encoder: distilbert            # Text encoder used by the policy for command strings.
+use_language: true # Whether the policy conditions on language text.
+language_encoder: distilbert # Text encoder used by the policy for command strings.
+history_chunk_size: ${ll_history_chunk_size}
+history_num_tokens: 8
+history_num_layers: 2
+history_num_heads: 8
 
 img_resize_cfg:
   left: [360, 480]
@@ -19,7 +23,6 @@ img_resize_cfg:
 
 img_aug_cfg:
   endoscope_img:
-
     # spatial
     crop_ratio: 0.95
     rotate_deg: 5.0
@@ -40,7 +43,6 @@ img_aug_cfg:
     max_shift_y_ratio: 0.2
 
   lw_img:
-    
     # spatial
     crop_ratio: 0.95
     rotate_deg: 5.0
@@ -58,10 +60,9 @@ img_aug_cfg:
 
     # random_shift
     max_shift_x_ratio: 0.2
-    max_shift_y_ratio: 0.2 
+    max_shift_y_ratio: 0.2
 
   rw_img:
-    
     # spatial
     crop_ratio: 0.95
     rotate_deg: 5.0
@@ -79,7 +80,7 @@ img_aug_cfg:
 
     # random_shift
     max_shift_x_ratio: 0.2
-    max_shift_y_ratio: 0.2 
+    max_shift_y_ratio: 0.2
 
 img_backbone_cfg:
   lr_backbone: 1e-5
@@ -87,7 +88,7 @@ img_backbone_cfg:
   backbone_type: efficientnet_b3film
   position_encoding_cfg:
     hidden_dim: 512
-    position_embedding_type: sine                   # sine or v2
+    position_embedding_type: sine # sine or v2
 
 transformer_cfg:
   hidden_dim: 512

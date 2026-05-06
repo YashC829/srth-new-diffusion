@@ -1,29 +1,32 @@
 from __future__ import annotations
 
 import json
-from collections import Counter
+import logging
 import math
-from pathlib import Path
 import random
+from collections import Counter
+from pathlib import Path
 from typing import List
-from tqdm import tqdm
 
-from hydra.core.hydra_config import HydraConfig
 import numpy as np
-from omegaconf import DictConfig, OmegaConf
 import torch
+import wandb
+from hydra.core.hydra_config import HydraConfig
+from omegaconf import DictConfig, OmegaConf
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader, WeightedRandomSampler
-import wandb
+from tqdm import tqdm
 
-from srth_new.general.utils import processing
-from srth_new.general.utils import dataset as general_dataset_utils
-from srth_new.general.utils.processing import compute_diffs, DatasetStats
-from srth_new.low_level_policy.dataset.low_level_dataset_lerobot import EpisodicDatasetDvrkGeneric
 from srth_new.general import constants
+from srth_new.general.utils import dataset as general_dataset_utils
+from srth_new.general.utils import processing
+from srth_new.general.utils.processing import DatasetStats, compute_diffs
+from srth_new.low_level_policy.dataset.low_level_dataset_lerobot import (
+    EpisodicDatasetDvrkGeneric,
+)
 
-import logging
 log = logging.getLogger(__name__)
+
 
 def set_seed(seed: int) -> None:
     np.random.seed(seed)
@@ -34,6 +37,7 @@ def set_seed(seed: int) -> None:
     if torch.backends.cudnn.enabled:
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
+
 
 import re
 from pathlib import Path
@@ -98,13 +102,16 @@ def prune_checkpoints(checkpoint_dir, keep_every):
             except FileNotFoundError:
                 pass
 
+
 def resolve_device(device_name: str) -> torch.device:
     if device_name.startswith("cuda") and not torch.cuda.is_available():
         return torch.device("cpu")
     return torch.device(device_name)
 
 
-def compute_dict_mean(epoch_dicts: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
+def compute_dict_mean(
+    epoch_dicts: list[dict[str, torch.Tensor]],
+) -> dict[str, torch.Tensor]:
     if not epoch_dicts:
         raise ValueError("Cannot average an empty list of metrics.")
 
@@ -172,6 +179,7 @@ def restore_hydra_state_from_wandb(
     }
     return restored
 
+
 def get_hydra_file_paths():
     hydra_dir = Path(HydraConfig.get().runtime.output_dir) / ".hydra"
 
@@ -190,6 +198,7 @@ def save_wandb_run_id(run_id: str) -> Path:
     wandb_run_id_path = hydra_dir / "wandb_run_id.txt"
     wandb_run_id_path.write_text(f"{run_id}\n", encoding="utf-8")
     return wandb_run_id_path
+
 
 def wandb_setup(cfg: DictConfig) -> DictConfig:
     wandb_id = cfg.wandb.id
@@ -242,6 +251,7 @@ def wandb_setup(cfg: DictConfig) -> DictConfig:
 
     return cfg
 
+
 def restore_hydra_cfg_from_wandb(entity: str, project: str, run_id: str) -> DictConfig:
     """
     Restore the resolved Hydra config from a previous W&B run.
@@ -267,12 +277,13 @@ def restore_hydra_cfg_from_wandb(entity: str, project: str, run_id: str) -> Dict
     restored_path = Path(restored.name)
     return OmegaConf.load(restored_path)
 
+
 def load_dataset_stats(
-        dataset_dir: str, 
-        tissue_sample_ids_train: List[int], 
-        phases: DictConfig,
-        action_mode: str
-    ):
+    dataset_dir: str,
+    tissue_sample_ids_train: List[int],
+    phases: DictConfig,
+    action_mode: str,
+):
 
     general_dataset_utils.validate_selected_phases(phases)
 
@@ -282,9 +293,11 @@ def load_dataset_stats(
 
     # load cached stats, if possible
     for k, info in stats.items():
-        if (info["dataset_dir"] == dataset_dir 
+        if (
+            info["dataset_dir"] == dataset_dir
             and info["tissue_sample_ids_train"] == tissue_sample_ids_train
-            and info["action_mode"] == action_mode):
+            and info["action_mode"] == action_mode
+        ):
             return DatasetStats(
                 np.array(info["action_mean"]),
                 np.array(info["action_std"]),
@@ -292,13 +305,15 @@ def load_dataset_stats(
                 np.array(info["action_max"]),
                 info["dataset_dir"],
                 info["tissue_sample_ids_train"],
-                info["action_mode"]
+                info["action_mode"],
             )
-    
-    # generate dataset stats
-    log.info('Computing dataset statistics. This could take a few minutes...')
 
-    temp_train_dataset = EpisodicDatasetDvrkGeneric(dataset_dir, tissue_sample_ids_train, phases)
+    # generate dataset stats
+    log.info("Computing dataset statistics. This could take a few minutes...")
+
+    temp_train_dataset = EpisodicDatasetDvrkGeneric(
+        dataset_dir, tissue_sample_ids_train, phases
+    )
     loader = DataLoader(temp_train_dataset, batch_size=12, shuffle=True)
 
     sum_ = None
@@ -340,7 +355,7 @@ def load_dataset_stats(
                 max_ = torch.full((dim,), float("-inf"), device=device, dtype=dtype)
 
             sum_ += valid_actions.sum(dim=0)
-            sum_sq += (valid_actions ** 2).sum(dim=0)
+            sum_sq += (valid_actions**2).sum(dim=0)
             count += valid_actions.shape[0]
 
             batch_min = valid_actions.min(dim=0).values
@@ -360,43 +375,41 @@ def load_dataset_stats(
 
     # Final statistics
     mean = sum_ / count
-    var = sum_sq / count - mean ** 2
+    var = sum_sq / count - mean**2
     var = torch.clamp(var, min=0.0)  # numerical stability
     std = torch.sqrt(var)
 
     # cache stats
     dataset_stats_cache_idx = len(stats.keys()) + 1
     stats[dataset_stats_cache_idx] = {
-        "action_mean": mean.tolist(), 
-        "action_std": std.tolist(), 
-        "action_min": min_.tolist(), 
-        "action_max": max_.tolist(), 
-        "tissue_sample_ids_train": list(tissue_sample_ids_train), 
+        "action_mean": mean.tolist(),
+        "action_std": std.tolist(),
+        "action_min": min_.tolist(),
+        "action_max": max_.tolist(),
+        "tissue_sample_ids_train": list(tissue_sample_ids_train),
         "dataset_dir": dataset_dir,
-        "action_mode": action_mode
+        "action_mode": action_mode,
     }
     with open(constants.DATASET_STATS_CACHE_FILE, "w") as file:
         json.dump(stats, file, indent=3)
 
-    return DatasetStats(mean, std, min_, max_, dataset_dir, tissue_sample_ids_train, action_mode)
+    return DatasetStats(
+        mean, std, min_, max_, dataset_dir, tissue_sample_ids_train, action_mode
+    )
 
 
 def load_dataloaders(cfg: DictConfig):
     log.info(f"Loading data from {cfg.repo_id}")
-    dataset_stats = load_dataset_stats(cfg.repo_id, cfg.tissue_sample_ids_train, cfg.phases, cfg.action_mode)
+    dataset_stats = load_dataset_stats(
+        cfg.repo_id, cfg.tissue_sample_ids_train, cfg.phases, cfg.action_mode
+    )
 
     train_dataset = EpisodicDatasetDvrkGeneric(
-        cfg.repo_id,
-        cfg.tissue_sample_ids_train,
-        cfg.phases,
-        cfg.chunk_size
+        cfg.repo_id, cfg.tissue_sample_ids_train, cfg.phases, cfg.future_chunk_size
     )
 
     val_dataset = EpisodicDatasetDvrkGeneric(
-        cfg.repo_id,
-        cfg.tissue_sample_ids_val,
-        cfg.phases,
-        cfg.chunk_size
+        cfg.repo_id, cfg.tissue_sample_ids_val, cfg.phases, cfg.future_chunk_size
     )
 
     # we have removed the train sampler for now...
@@ -417,15 +430,24 @@ def load_dataloaders(cfg: DictConfig):
     #     pin_memory=True, num_workers=cfg.num_workers,  persistent_workers=True
     # )
     train_dataloader = DataLoader(
-        train_dataset, batch_size=cfg.batch_size, shuffle=True,
-        pin_memory=True, num_workers=cfg.num_workers,  persistent_workers=True
+        train_dataset,
+        batch_size=cfg.batch_size,
+        shuffle=True,
+        pin_memory=True,
+        num_workers=cfg.num_workers,
+        persistent_workers=True,
     )
     val_dataloader = DataLoader(
-        val_dataset, batch_size=cfg.batch_size, pin_memory=True, shuffle=True,
-        num_workers=cfg.num_workers,  persistent_workers=True
+        val_dataset,
+        batch_size=cfg.batch_size,
+        pin_memory=True,
+        shuffle=True,
+        num_workers=cfg.num_workers,
+        persistent_workers=True,
     )
 
     return train_dataloader, val_dataloader, dataset_stats
+
 
 def get_cosine_schedule_with_warmup(
     optimizer, num_warmup_steps, num_training_steps, num_cycles=0.5
@@ -442,14 +464,24 @@ def get_cosine_schedule_with_warmup(
 
     return LambdaLR(optimizer, lr_lambda)
 
+
 def detach_dict(d):
     new_d = dict()
     for k, v in d.items():
         new_d[k] = v.detach().cpu()
     return new_d
 
+
 def collect_data(data, device: torch.device):
-    endoscope_img, lw_img, rw_img, current_pose_data, action_data, is_pad, command_text = data
+    (
+        endoscope_img,
+        lw_img,
+        rw_img,
+        current_pose_data,
+        action_data,
+        is_pad,
+        command_text,
+    ) = data
     endoscope_img = endoscope_img.to(device)
     lw_img = lw_img.to(device)
     rw_img = rw_img.to(device)
@@ -459,6 +491,6 @@ def collect_data(data, device: torch.device):
         rw_img,
         current_pose_data,
         action_data,
-        is_pad.to(device), 
-        list(command_text) if isinstance(command_text, tuple) else command_text
+        is_pad.to(device),
+        list(command_text) if isinstance(command_text, tuple) else command_text,
     )

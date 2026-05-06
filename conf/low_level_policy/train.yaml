@@ -6,7 +6,14 @@ defaults:
 
 seed: 1          # Global random seed for NumPy / PyTorch / data shuffling.
 device: cuda     # Falls back to CPU only if the training code is updated to do so explicitly.
+
+# these will pass to both policy and dataloader cfgs.
+# its easier to define them once as they must be consistent
+# across policy and dataloader
 action_mode: hybrid_relative
+ll_history_chunk_size: 100
+ll_future_chunk_size: 60
+
 
 train:
   num_train_steps: 500000

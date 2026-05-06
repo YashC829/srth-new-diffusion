@@ -33,10 +33,18 @@ class DVRKPolicy(nn.Module):
 
     def set_dataset_stats(self, dataset_stats: processing.DatasetStats) -> None:
         """Attach dataset statistics used for action normalization."""
-        self.stats_mean.copy_(torch.as_tensor(dataset_stats.action_mean, dtype=torch.float32))
-        self.stats_std.copy_(torch.as_tensor(dataset_stats.action_std, dtype=torch.float32))
-        self.stats_min.copy_(torch.as_tensor(dataset_stats.action_min, dtype=torch.float32))
-        self.stats_max.copy_(torch.as_tensor(dataset_stats.action_max, dtype=torch.float32))
+        self.stats_mean.copy_(
+            torch.as_tensor(dataset_stats.action_mean, dtype=torch.float32)
+        )
+        self.stats_std.copy_(
+            torch.as_tensor(dataset_stats.action_std, dtype=torch.float32)
+        )
+        self.stats_min.copy_(
+            torch.as_tensor(dataset_stats.action_min, dtype=torch.float32)
+        )
+        self.stats_max.copy_(
+            torch.as_tensor(dataset_stats.action_max, dtype=torch.float32)
+        )
         self.has_dataset_stats.fill_(True)
         self.stats_dataset_dir = dataset_stats.dataset_dir
         self.stats_tissue_sample_ids_train = list(dataset_stats.tissue_sample_ids_train)
@@ -58,7 +66,7 @@ class DVRKPolicy(nn.Module):
             action_max=self.stats_max.detach().cpu().numpy().copy(),
             dataset_dir=self.stats_dataset_dir,
             tissue_sample_ids_train=list(self.stats_tissue_sample_ids_train or []),
-            action_mode=self.action_mode
+            action_mode=self.action_mode,
         )
 
     def _require_dataset_stats(self) -> None:
@@ -115,15 +123,12 @@ class DVRKPolicy(nn.Module):
         return self._preserve_rotation_columns(denormalized, actions)
 
     def prepare_actions_for_training(
-        self,
-        current_pose: torch.Tensor,
-        actions: torch.Tensor,
-        is_pad: torch.Tensor
+        self, current_pose: torch.Tensor, actions: torch.Tensor, is_pad: torch.Tensor
     ) -> torch.Tensor:
         """Take current absolute actions and pose and do the following:
-            1. Convert absolute actions to relative actions according to the chosen
-                self.action_mode
-            2. Normalize the relative actions according to chosen self.norm_scheme
+        1. Convert absolute actions to relative actions according to the chosen
+            self.action_mode
+        2. Normalize the relative actions according to chosen self.norm_scheme
         """
         policy_actions = processing.convert_action_batch_to_relative(
             current_pose, actions, is_pad, self.action_mode
@@ -152,7 +157,9 @@ class DVRKPolicy(nn.Module):
 
         absolute_actions_np = np.stack(
             [
-                processing.convert_single_policy_actions_to_absolute(pose, action, self.action_mode)
+                processing.convert_single_policy_actions_to_absolute(
+                    pose, action, self.action_mode
+                )
                 for pose, action in zip(current_pose_np, denormalized_actions_np)
             ],
             axis=0,
@@ -187,7 +194,9 @@ class DVRKPolicy(nn.Module):
             "policy_config": self._serialize_policy_config(),
             "stats_metadata": {
                 "dataset_dir": self.stats_dataset_dir,
-                "tissue_sample_ids_train": list(self.stats_tissue_sample_ids_train or []),
+                "tissue_sample_ids_train": list(
+                    self.stats_tissue_sample_ids_train or []
+                ),
             },
         }
         payload.update(self._serialize_checkpoint_metadata())

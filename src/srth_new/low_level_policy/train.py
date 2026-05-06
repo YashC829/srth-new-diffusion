@@ -6,12 +6,12 @@ from pathlib import Path
 
 import hydra
 import torch
+import wandb
 from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig
 from torch.optim.lr_scheduler import LambdaLR
 from tqdm import tqdm
 
-import wandb
 from srth_new.low_level_policy import utils
 
 log = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ def resume_training_state(
     train_cfg: DictConfig,
     policy,
     scheduler: LambdaLR,
-    device: torch.device,
+    device: torch.device,  # type: ignore
 ) -> int:
     resume_checkpoint = train_cfg.resume_checkpoint
     if not resume_checkpoint:
