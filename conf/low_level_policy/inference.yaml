@@ -10,6 +10,8 @@ prediction_frequency_hz: 5.0
 action_execution_hz: 20.0
 enable_gui: true
 start_paused: true
+ll_future_chunk_size: 60
+ll_history_chunk_size: 0
 
 hydra:
   run:

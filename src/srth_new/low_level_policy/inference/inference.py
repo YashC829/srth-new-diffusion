@@ -341,7 +341,7 @@ class LowLevelPolicy:
         # self.psm1_img = cv2.cvtColor(self.psm1_img, cv2.COLOR_BGR2RGB)
         # self.psm1_img = rearrange(self.psm1_img, 'h w c -> c h w')
 
-        self.visualize_zmq_imgs()
+        # self.visualize_zmq_imgs()
 
         with self.frame_lock:
             left_img = self.image_frames[constants.LEFT_ENDOSCOPE_TOPIC]
@@ -443,6 +443,32 @@ class LowLevelPolicy:
                     break
                 time.sleep(min(0.01, remaining))
 
+    def execute_actions_sequential(self, actions_psm1, actions_psm2):
+        num_steps = min(self.policy.num_queries, len(actions_psm1), len(actions_psm2))
+        max_steps = 40
+        for jj in range(num_steps):
+            if jj > max_steps:
+                break
+            if self._shutdown_event.is_set() or self.is_ros_shutdown():
+                return
+
+            while self.is_paused() and not self._shutdown_event.is_set():
+                time.sleep(0.01)
+
+            if self._shutdown_event.is_set() or self.is_ros_shutdown():
+                return
+            self.rt.node.get_logger().info(f"PSM2 Action: {actions_psm2[jj]}")
+            # self.psm1_app.run_full_pose_goal(actions_psm1[jj])
+            self.psm2_app.run_full_pose_goal(actions_psm2[jj], self.rt.psm2_jaw)
+            _, _, _, action_execution_period, _ = self.get_runtime_controls()
+            sleep_deadline = time.monotonic() + action_execution_period
+            time.sleep(0.01)
+            while not self._shutdown_event.is_set():
+                remaining = sleep_deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                time.sleep(min(0.01, remaining))
+
     def stop_action_execution(self):
         if self._execution_stop_event is not None:
             self._execution_stop_event.set()
@@ -454,19 +480,20 @@ class LowLevelPolicy:
         self._execution_stop_event = None
 
     def start_action_execution(self, actions_psm1, actions_psm2):
-        self.stop_action_execution()
-        self._execution_stop_event = threading.Event()
-        self._execution_thread = threading.Thread(
-            target=self.execute_actions,
-            args=(actions_psm1, actions_psm2, self._execution_stop_event),
-            daemon=True,
-        )
-        self._execution_thread.start()
+        self.execute_actions_sequential(actions_psm1, actions_psm2)
+        # self.stop_action_execution()
+        # self._execution_stop_event = threading.Event()
+        # self._execution_thread = threading.Thread(
+        #     target=self.execute_actions,
+        #     args=(actions_psm1, actions_psm2, self._execution_stop_event),
+        #     daemon=True,
+        # )
+        # self._execution_thread.start()
 
 
     def wait_for_zmq_imgs(self):
 
-        while None in list(self.image_frames.values()):
+        while any(v is None for v in self.image_frames.values()):
             log.info(f"Waiting for ZMQ image topics: {", ".join([k for k, v in self.image_frames.items() if v is None])}")
 
     ## --------------------- main loop -----------------------

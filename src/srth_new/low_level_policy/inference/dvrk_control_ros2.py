@@ -10,9 +10,6 @@ import math
 import numpy as np
 import PyKDL
 
-# Local imports
-from rostopics_ros2 import RosTopics
-
 class example_application:
     def __init__(self, ral, arm_name, expected_interval):
         # In ROS 2, printing is replaced by logging through the node handle
@@ -170,7 +167,7 @@ class example_application:
     #         self.arm.jaw.servo_jp(jaw_position)
     #         print("servoed jaw")
 
-    def run_full_pose_goal(self, wp, jaw_angle=None):
+    def run_full_pose_goal(self, wp, jaw_angle=None, jaw_effort=None):
         goal = PyKDL.Frame()
         goal.p = PyKDL.Vector(wp[0], wp[1], wp[2])
         goal.M = PyKDL.Rotation.Quaternion(wp[3], wp[4], wp[5], wp[6])
@@ -178,13 +175,21 @@ class example_application:
         self.arm.servo_cp(goal)
 
         if jaw_angle is not None:
-            jaw_diff_thres = 0.3
-            jaw_diff = abs(wp[-1] - jaw_angle.position[0])
-            if abs(jaw_diff) > jaw_diff_thres:
-                # Move in the direction of the target but only by the threshold amount
-                jaw_angle.position[0] = wp[-1] + jaw_diff_thres * np.sign(jaw_diff)
+            max_diff = 0.2
+            diff = wp[-1] - jaw_angle
+            sign = np.sign(diff)
+            target_diff = min(max_diff, abs(diff)) * sign
 
-            self.arm.jaw.servo_jp(np.array([wp[-1]]))
+            target_jaw_angle = max(0, jaw_angle + target_diff)
+            target_jaw_angle = min(1.2, target_jaw_angle)
+
+            if target_jaw_angle < -.3:
+                target_jaw_angle *= 1.1
+
+            self.arm.jaw.servo_jp(np.array([target_jaw_angle]))
+
+            # jaw_effort = sign * 0.35
+            # self.arm.jaw.servo_jf(np.array([jaw_effort]))
 
     def run_jaw_servo(self):
         self.node.get_logger().info('Starting jaw servo')

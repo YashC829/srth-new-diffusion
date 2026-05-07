@@ -439,11 +439,12 @@ class ACTPolicyUpdated(DVRKPolicy):
         rw_img: torch.Tensor,
         current_pose,
         actions=None,
-        is_pad=None,
+        action_is_pad=None,
         command_text=None,
         action_history: Optional[torch.Tensor] = None,
         action_history_is_pad: Optional[torch.Tensor] = None,
         return_policy_actions: bool = False,
+        **kwargs
     ):
         """Run the policy in training or inference mode.
 
@@ -513,7 +514,7 @@ class ACTPolicyUpdated(DVRKPolicy):
             )
 
         if actions is not None:
-            if is_pad is None:
+            if action_is_pad is None:
                 raise ValueError("is_pad is required when actions are provided.")
 
             # Keep track of training command text strings so they can be saved in
@@ -521,17 +522,17 @@ class ACTPolicyUpdated(DVRKPolicy):
             self._record_training_command_text(command_text)
 
             processed_actions = self.prepare_actions_for_training(
-                current_pose, actions, is_pad
+                current_pose, actions, action_is_pad
             )
             processed_actions = processed_actions[:, : self.num_queries]
-            is_pad = is_pad[:, : self.num_queries]
+            action_is_pad = action_is_pad[:, : self.num_queries]
 
             a_hat, is_pad_hat, (mu, logvar) = self.model(
                 qpos=model_qpos,
                 image_stack=rgb_img_stack,
                 env_state=env_state,
                 actions=processed_actions,
-                is_pad=is_pad,
+                is_pad=action_is_pad,
                 command_embedding=command_embedding,
                 depth_image=depth_img,
                 history=processed_history,
@@ -542,7 +543,7 @@ class ACTPolicyUpdated(DVRKPolicy):
 
             loss_dict = {}
             all_l1 = F.l1_loss(processed_actions, a_hat, reduction="none")
-            l1 = (all_l1 * ~is_pad.unsqueeze(-1)).mean()
+            l1 = (all_l1 * ~action_is_pad.unsqueeze(-1)).mean()
 
             loss_dict["l1"] = l1
             loss_dict["kl"] = total_kld[0]

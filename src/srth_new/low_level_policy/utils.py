@@ -405,11 +405,11 @@ def load_dataloaders(cfg: DictConfig):
     )
 
     train_dataset = EpisodicDatasetDvrkGeneric(
-        cfg.repo_id, cfg.tissue_sample_ids_train, cfg.phases, cfg.future_chunk_size
+        cfg.repo_id, cfg.tissue_sample_ids_train, cfg.phases, cfg.history_chunk_size, cfg.future_chunk_size
     )
 
     val_dataset = EpisodicDatasetDvrkGeneric(
-        cfg.repo_id, cfg.tissue_sample_ids_val, cfg.phases, cfg.future_chunk_size
+        cfg.repo_id, cfg.tissue_sample_ids_val, cfg.phases, cfg.history_chunk_size, cfg.future_chunk_size
     )
 
     # we have removed the train sampler for now...
@@ -477,20 +477,24 @@ def collect_data(data, device: torch.device):
         endoscope_img,
         lw_img,
         rw_img,
-        current_pose_data,
+        current_pose,
+        history_data,
+        history_is_pad,
         action_data,
-        is_pad,
+        action_is_pad,
         command_text,
     ) = data
     endoscope_img = endoscope_img.to(device)
     lw_img = lw_img.to(device)
     rw_img = rw_img.to(device)
-    return (
-        endoscope_img,
-        lw_img,
-        rw_img,
-        current_pose_data,
-        action_data,
-        is_pad.to(device),
-        list(command_text) if isinstance(command_text, tuple) else command_text,
-    )
+    return {
+        "endoscope_img": endoscope_img,
+        "lw_img": lw_img,
+        "rw_img": rw_img,
+        "current_pose": current_pose,
+        "action_history": history_data,
+        "action_history_is_pad": history_is_pad,
+        "action": action_data,
+        "action_is_pad": action_is_pad.to(device),
+        "command_text": list(command_text[0])
+    }

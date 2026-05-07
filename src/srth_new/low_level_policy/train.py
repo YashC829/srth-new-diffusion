@@ -96,24 +96,8 @@ def run_training(
 
         # run training
         for data in train_loader:
-            (
-                endoscope_img,
-                lw_img,
-                rw_img,
-                current_pose_data,
-                action_data,
-                is_pad,
-                command_text,
-            ) = utils.collect_data(data, device)
-            forward_dict = policy(
-                endoscope_img,
-                lw_img,
-                rw_img,
-                current_pose_data,
-                action_data,
-                is_pad,
-                command_text,
-            )
+            inputs = utils.collect_data(data, device)
+            forward_dict = policy(**inputs)
 
             loss = forward_dict["loss"]
             loss.backward()
@@ -134,24 +118,8 @@ def run_training(
                     val_batches = 0
                     val_sample_size = min(1000, len(val_loader))
                     for data in val_loader:
-                        (
-                            endoscope_img,
-                            lw_img,
-                            rw_img,
-                            current_pose_data,
-                            action_data,
-                            is_pad,
-                            command_text,
-                        ) = utils.collect_data(data, device)
-                        forward_dict = policy(
-                            endoscope_img,
-                            lw_img,
-                            rw_img,
-                            current_pose_data,
-                            action_data,
-                            is_pad,
-                            command_text,
-                        )
+                        inputs = utils.collect_data(data, device)
+                        forward_dict = policy(**inputs)
 
                         val_metrics.append(utils.detach_dict(forward_dict))
                         val_batches += 1
