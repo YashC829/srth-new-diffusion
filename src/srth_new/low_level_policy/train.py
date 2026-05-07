@@ -82,6 +82,7 @@ def run_training(
     train_metrics = list()
     val_metrics = list()
     training_step = starting_step
+    policy.train()
 
     epoch = starting_step // len(train_loader)
 
@@ -126,6 +127,7 @@ def run_training(
 
                         if val_batches >= val_sample_size:
                             break
+                policy.train()
 
                 # log to wandb and clear out metrics
                 log_to_wandb(train_metrics, "train", epoch, training_step)

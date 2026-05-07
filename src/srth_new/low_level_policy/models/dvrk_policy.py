@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import torch
 from torch import nn
 
 from srth_new.general.utils import processing
+
+log = logging.getLogger(__name__)
 
 
 class DVRKPolicy(nn.Module):
@@ -214,6 +218,12 @@ class DVRKPolicy(nn.Module):
             )
             self._restore_checkpoint_metadata(model_dict)
         load_result = self.load_state_dict(state_dict, strict=False)
+        if load_result.missing_keys:
+            log.warning("Checkpoint load missing keys: %s", load_result.missing_keys)
+        if load_result.unexpected_keys:
+            log.warning(
+                "Checkpoint load unexpected keys: %s", load_result.unexpected_keys
+            )
         if "stats_mean" in state_dict:
             self.has_dataset_stats.fill_(True)
         return load_result
