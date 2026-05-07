@@ -11,10 +11,6 @@ action_mode: ${..action_mode}
 norm_scheme: std
 use_language: true # Whether the policy conditions on language text.
 language_encoder: distilbert # Text encoder used by the policy for command strings.
-# history_chunk_size: ${ll_history_chunk_size}
-# history_num_tokens: 8
-# history_num_layers: 2
-# history_num_heads: 8
 
 img_resize_cfg:
   left: [360, 480]

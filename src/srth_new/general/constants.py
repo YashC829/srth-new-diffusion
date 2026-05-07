@@ -236,6 +236,9 @@ HEADER_NAME_ESU_SIGNAL = "ESU_signal"
 QUAT_CP_PSM1 = ["psm1_pose.orientation.x", "psm1_pose.orientation.y", "psm1_pose.orientation.z", "psm1_pose.orientation.w"]
 QUAT_CP_PSM2 = ["psm2_pose.orientation.x", "psm2_pose.orientation.y", "psm2_pose.orientation.z", "psm2_pose.orientation.w"]
 
+# dvrk constants
+JAW_MAX_ANGLE_RAD = 1.3
+JAW_MIN_ANGLE_RAD = -.36
 
 
 # dataset statistics caching

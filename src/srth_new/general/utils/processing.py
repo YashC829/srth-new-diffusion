@@ -92,7 +92,7 @@ def convert_single_policy_actions_to_absolute(
             actions_psm1,
             qpos_psm1.copy(),
         )
-        actions_psm1[:, 7] = np.clip(actions[:, 9], -0.698, 0.698)
+        actions_psm1[:, 7] = np.clip(actions[:, 9], constants.JAW_MIN_ANGLE_RAD, constants.JAW_MAX_ANGLE_RAD)
 
         actions_psm2 = np.zeros((chunk_size, 8), dtype=np.float32)
         actions_psm2[:, 0:3] = qpos_psm2[0:3] + actions[:, 10:13]
@@ -101,7 +101,7 @@ def convert_single_policy_actions_to_absolute(
             actions_psm2,
             qpos_psm2.copy(),
         )
-        actions_psm2[:, 7] = np.clip(actions[:, 19], -0.698, 0.698)
+        actions_psm2[:, 7] = np.clip(actions[:, 19], constants.JAW_MIN_ANGLE_RAD, constants.JAW_MAX_ANGLE_RAD)
     elif action_mode == "relative_endoscope":
         actions_psm1 = np.zeros((chunk_size, 8), dtype=np.float32)
         actions_psm1[:, 0:3] = qpos_psm1[0:3] + actions[:, 0:3]
@@ -110,7 +110,7 @@ def convert_single_policy_actions_to_absolute(
             actions_psm1,
             qpos_psm1.copy(),
         )
-        actions_psm1[:, 7] = np.clip(actions[:, 9], -0.698, 0.698)
+        actions_psm1[:, 7] = np.clip(actions[:, 9], constants.JAW_MIN_ANGLE_RAD, constants.JAW_MAX_ANGLE_RAD)
 
         actions_psm2 = np.zeros((chunk_size, 8), dtype=np.float32)
         actions_psm2[:, 0:3] = qpos_psm2[0:3] + actions[:, 10:13]
@@ -119,7 +119,7 @@ def convert_single_policy_actions_to_absolute(
             actions_psm2,
             qpos_psm2.copy(),
         )
-        actions_psm2[:, 7] = np.clip(actions[:, 19], -0.698, 0.698)
+        actions_psm2[:, 7] = np.clip(actions[:, 19], constants.JAW_MIN_ANGLE_RAD, constants.JAW_MAX_ANGLE_RAD)
     elif action_mode == "ego":
         actions_psm1 = convert_actions_to_SE3_then_final_actions(
             actions[:, 0:3],
