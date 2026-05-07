@@ -102,11 +102,18 @@ class EpisodicDatasetDvrkGeneric(torch.utils.data.Dataset):
         lw_img = convert(sample["images.wrist.left"])
         rw_img = convert(sample["images.wrist.right"])
         state = sample["state"]
-        action_history = sample["action"][:self.history_chunk_size] if self.history_chunk_size > 0 else None
-        action_history_is_pad = sample["action_is_pad"][:self.history_chunk_size] if self.history_chunk_size > 0 else None
+        action_history_is_pad = torch.empty((0,), dtype=torch.bool)
         action = sample["action"][self.history_chunk_size:]
         action_is_pad = sample["action_is_pad"][self.history_chunk_size:]
-        command_text = sample["task"],
+        command_text = sample["task"]
+
+        # handle the action history
+        if self.history_chunk_size > 0:
+            action_history = sample["action"][:self.history_chunk_size]
+            action_history_is_pad = sample["action_is_pad"][:self.history_chunk_size]
+        else:
+            action_dim = sample["action"].shape[-1]
+            action_history = torch.empty((0, action_dim), dtype=sample["action"].dtype)
 
         return (
             endoscope_img,

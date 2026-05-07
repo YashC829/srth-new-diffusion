@@ -496,5 +496,5 @@ def collect_data(data, device: torch.device):
         "action_history_is_pad": history_is_pad,
         "action": action_data,
         "action_is_pad": action_is_pad.to(device),
-        "command_text": list(command_text[0])
+        "command_text": list(command_text)
     }

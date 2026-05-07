@@ -11,7 +11,7 @@ device: cuda     # Falls back to CPU only if the training code is updated to do 
 # its easier to define them once as they must be consistent
 # across policy and dataloader
 action_mode: hybrid_relative
-ll_history_chunk_size: 100
+ll_history_chunk_size: 0
 ll_future_chunk_size: 60
 
 
