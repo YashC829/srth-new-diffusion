@@ -16,7 +16,7 @@ from srth_new.general.utils.lang_encoding import (
 from srth_new.low_level_policy.dataset.img_aug import ImageAug
 from srth_new.low_level_policy.models.detr.models.backbone import build_image_backbone
 from srth_new.low_level_policy.models.detr.models.detr_vae import build_encoder
-from srth_new.low_level_policy.models.detr.models.transformer import build_transformer
+from srth_new.low_level_policy.models.transformer_updated import build_transformer
 from srth_new.low_level_policy.models.detr_vae_updated import DETRVAEUpdated
 from srth_new.low_level_policy.models.dvrk_policy import DVRKPolicy
 
@@ -438,7 +438,7 @@ class ACTPolicyUpdated(DVRKPolicy):
         lw_img: torch.Tensor,
         rw_img: torch.Tensor,
         current_pose,
-        actions=None,
+        action=None,
         action_is_pad=None,
         command_text=None,
         action_history: Optional[torch.Tensor] = None,
@@ -512,8 +512,11 @@ class ACTPolicyUpdated(DVRKPolicy):
                 action_history,
                 action_history_is_pad,
             )
+            processed_history = processed_history.to(rgb_img_stack.device)
+            action_history_is_pad = action_history_is_pad.to(rgb_img_stack.device)
 
-        if actions is not None:
+        if action is not None:
+            action = action.to(rgb_img_stack.device)
             if action_is_pad is None:
                 raise ValueError("is_pad is required when actions are provided.")
 
@@ -522,7 +525,7 @@ class ACTPolicyUpdated(DVRKPolicy):
             self._record_training_command_text(command_text)
 
             processed_actions = self.prepare_actions_for_training(
-                current_pose, actions, action_is_pad
+                current_pose, action, action_is_pad
             )
             processed_actions = processed_actions[:, : self.num_queries]
             action_is_pad = action_is_pad[:, : self.num_queries]

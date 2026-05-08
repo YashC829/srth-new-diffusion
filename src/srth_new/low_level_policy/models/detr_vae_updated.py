@@ -39,7 +39,7 @@ class DETRVAEUpdated(nn.Module):
         self.use_language = use_language
         self.use_film = use_film
         self.use_depth = depth_backbone is not None
-        self.use_history = history_chunk_size is not None
+        self.use_history = history_chunk_size is not None and history_chunk_size > 0
         self.history_num_tokens = history_num_tokens
 
         self.action_head = nn.Linear(hidden_dim, state_dim)
@@ -88,7 +88,11 @@ class DETRVAEUpdated(nn.Module):
 
         self.latent_out_proj = nn.Linear(self.latent_dim, hidden_dim)
 
-        pos_embed_dim = 3 if self.use_language else 2
+        pos_embed_dim = 2
+        if self.use_language:
+            pos_embed_dim += 1
+        if self.use_history:
+            pos_embed_dim += history_num_tokens
         self.additional_pos_embed = nn.Embedding(pos_embed_dim, hidden_dim)
 
         if self.use_history:

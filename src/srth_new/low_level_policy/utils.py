@@ -21,8 +21,8 @@ from srth_new.general import constants
 from srth_new.general.utils import dataset as general_dataset_utils
 from srth_new.general.utils import processing
 from srth_new.general.utils.processing import DatasetStats, compute_diffs
-from srth_new.low_level_policy.dataset.low_level_dataset_lerobot import (
-    EpisodicDatasetDvrkGeneric,
+from srth_new.low_level_policy.dataset.low_level_dataset import (
+    DvrkLerobotDataset,
 )
 
 log = logging.getLogger(__name__)
@@ -311,7 +311,7 @@ def load_dataset_stats(
     # generate dataset stats
     log.info("Computing dataset statistics. This could take a few minutes...")
 
-    temp_train_dataset = EpisodicDatasetDvrkGeneric(
+    temp_train_dataset = DvrkLerobotDataset(
         dataset_dir, tissue_sample_ids_train, phases
     )
     loader = DataLoader(temp_train_dataset, batch_size=12, shuffle=True)
@@ -407,7 +407,7 @@ def load_dataloaders(cfg: DictConfig):
         cfg.repo_id, cfg.tissue_sample_ids_train, cfg.phases, cfg.action_mode
     )
 
-    train_dataset = EpisodicDatasetDvrkGeneric(
+    train_dataset = DvrkLerobotDataset(
         cfg.repo_id,
         cfg.tissue_sample_ids_train,
         cfg.phases,
@@ -415,7 +415,7 @@ def load_dataloaders(cfg: DictConfig):
         cfg.future_chunk_size,
     )
 
-    val_dataset = EpisodicDatasetDvrkGeneric(
+    val_dataset = DvrkLerobotDataset(
         cfg.repo_id,
         cfg.tissue_sample_ids_val,
         cfg.phases,

@@ -528,6 +528,7 @@ class LowLevelPolicy:
         return True
 
     def run(self):
+        self.policy.eval()
         if not self.wait_for_required_topics():
             self.shutdown_ros()
             return
