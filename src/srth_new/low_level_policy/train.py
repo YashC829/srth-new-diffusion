@@ -117,7 +117,7 @@ def run_training(
                 with torch.inference_mode():
                     policy.eval()
                     val_batches = 0
-                    val_sample_size = min(1000, len(val_loader))
+                    val_sample_size = min(100, len(val_loader))
                     for data in val_loader:
                         inputs = utils.collect_data(data, device)
                         forward_dict = policy(**inputs)

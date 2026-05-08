@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import pdb
 from pathlib import Path
 
 import hydra
@@ -94,20 +95,89 @@ def run_training(
 
     while training_step < train_cfg.num_train_steps:
 
-        # run training
-        for data in train_loader:
+        for data in val_loader:
             inputs = utils.collect_data(data, device)
-            processed_actions = policy.prepare_actions_for_training(
-                inputs["current_pose"].to("cuda"), inputs["action"].to("cuda"), inputs["action_is_pad"].to("cuda")
-            )
-            absolute_action = policy(
+            # processed_actions = policy.prepare_actions_for_training(
+            #     inputs["current_pose"].to("cuda"),
+            #     inputs["action"].to("cuda"),
+            #     inputs["action_is_pad"].to("cuda"),
+            # )
+
+            policy.eval()
+
+            loss_dict = policy(
                 inputs["endoscope_img"],
                 inputs["lw_img"],
                 inputs["rw_img"],
                 inputs["current_pose"],
+                inputs["action"],
+                inputs["action_is_pad"],
                 command_text=inputs["command_text"],
-                return_policy_actions=False
+                return_policy_actions=False,
             )
+
+            print(loss_dict)
+
+            policy.train()
+
+            loss_dict = policy(
+                inputs["endoscope_img"],
+                inputs["lw_img"],
+                inputs["rw_img"],
+                inputs["current_pose"],
+                inputs["action"],
+                inputs["action_is_pad"],
+                command_text=inputs["command_text"],
+                return_policy_actions=False,
+            )
+
+            print(loss_dict)
+            print("\n\n")
+
+            # absolute_action, processed_action = policy.forward_debug(
+            #     inputs["endoscope_img"],
+            #     inputs["lw_img"],
+            #     inputs["rw_img"],
+            #     inputs["current_pose"],
+            #     command_text=inputs["command_text"],
+            #     return_policy_actions=False,
+            # )
+            # log.info(f"Processed action: {processed_action[:, 0, -1]}")
+            # log.info(f"GT Processed action: {processed_actions[:, 0, -1]}")
+            # log.info(f"Absolute action: {absolute_action[:, 0, -1]}")
+            # log.info(f"GT Absolute action: {inputs['action'][:, 0, -1]}")
+
+            # processed_diff = processed_action[:, 0, -1].to(
+            #     torch.device("cuda")
+            # ) - processed_actions[:, 0, -1].to(torch.device("cuda"))
+            # log.info(f"Processed diff jaw angle: {processed_diff}")
+            #
+            # processed_diff = processed_action[:, 0, 8].to(
+            #     torch.device("cuda")
+            # ) - processed_actions[:, 0, 8].to(torch.device("cuda"))
+            # log.info(f"Processed diff x: {processed_diff}")
+            #
+            # processed_diff = processed_action[:, 0, 9].to(
+            #     torch.device("cuda")
+            # ) - processed_actions[:, 0, 9].to(torch.device("cuda"))
+            # log.info(f"Processed diff y: {processed_diff}")
+            #
+            # absolute_diff = absolute_action[:, 0, -1].to(torch.device("cuda")) - inputs[
+            #     "action"
+            # ][:, 0, -1].to(torch.device("cuda"))
+            # log.info(f"Absolute diff jaw angle: {absolute_diff}")
+            #
+            # absolute_diff = absolute_action[:, 0, 8].to(torch.device("cuda")) - inputs[
+            #     "action"
+            # ][:, 0, 8].to(torch.device("cuda"))
+            # log.info(f"Absolute diff x: {absolute_diff}")
+            #
+            # absolute_diff = absolute_action[:, 0, 9].to(torch.device("cuda")) - inputs[
+            #     "action"
+            # ][:, 0, 9].to(torch.device("cuda"))
+            # log.info(f"Absolute diff y: {absolute_diff}")
+
+            # pdb.set_trace()
 
             # run validation and log loss metrics to wandb
             if training_step % train_cfg.validate_every == 0:
@@ -159,7 +229,9 @@ def run_training(
 
 
 @hydra.main(
-    version_base=None, config_path="../../../../conf/low_level_policy", config_name="train"
+    version_base=None,
+    config_path="../../../../conf/low_level_policy",
+    config_name="train",
 )
 def main(cfg: DictConfig) -> None:
     utils.set_seed(int(cfg.seed))

@@ -329,7 +329,10 @@ def load_dataset_stats(
 
     while sample_count < desired_samples:
         for data in loader:
-            _, _, _, current_pose, action_data, is_pad, _ = data
+            inputs = collect_data(data, torch.device("cpu"))
+            current_pose = inputs["current_pose"]
+            action_data = inputs["action"]
+            is_pad = inputs["action_is_pad"]
 
             # the dataset stats will take place in the same action mode representation
             # as is used by the model. thus, we need to make the conversion here
@@ -405,11 +408,19 @@ def load_dataloaders(cfg: DictConfig):
     )
 
     train_dataset = EpisodicDatasetDvrkGeneric(
-        cfg.repo_id, cfg.tissue_sample_ids_train, cfg.phases, cfg.history_chunk_size, cfg.future_chunk_size
+        cfg.repo_id,
+        cfg.tissue_sample_ids_train,
+        cfg.phases,
+        cfg.history_chunk_size,
+        cfg.future_chunk_size,
     )
 
     val_dataset = EpisodicDatasetDvrkGeneric(
-        cfg.repo_id, cfg.tissue_sample_ids_val, cfg.phases, cfg.history_chunk_size, cfg.future_chunk_size
+        cfg.repo_id,
+        cfg.tissue_sample_ids_val,
+        cfg.phases,
+        cfg.history_chunk_size,
+        cfg.future_chunk_size,
     )
 
     # we have removed the train sampler for now...
@@ -496,5 +507,5 @@ def collect_data(data, device: torch.device):
         "action_history_is_pad": history_is_pad,
         "action": action_data,
         "action_is_pad": action_is_pad.to(device),
-        "command_text": list(command_text)
+        "command_text": list(command_text),
     }

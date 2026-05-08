@@ -1,21 +1,25 @@
 from __future__ import annotations
 
+import logging
+import pdb
 from typing import List, Literal
 
-from omegaconf import DictConfig, OmegaConf
 import torch
-from torchvision import transforms
+from omegaconf import DictConfig, OmegaConf
 from torch.nn import functional as F
+from torchvision import transforms
 
-from srth_new.general.utils.lang_encoding import encode_text, initialize_model_and_tokenizer
-from .dvrk_policy import DVRKPolicy
-from srth_new.low_level_policy.models.detr.models.backbone import build_image_backbone
-from srth_new.low_level_policy.models.detr.models.transformer import build_transformer
-from srth_new.low_level_policy.models.detr.models.detr_vae import build_encoder
-from srth_new.low_level_policy.models.detr.models.detr_vae import DETRVAE
+from srth_new.general.utils.lang_encoding import (
+    encode_text,
+    initialize_model_and_tokenizer,
+)
 from srth_new.low_level_policy.dataset.img_aug import ImageAug
+from srth_new.low_level_policy.models.detr.models.backbone import build_image_backbone
+from srth_new.low_level_policy.models.detr.models.detr_vae import DETRVAE, build_encoder
+from srth_new.low_level_policy.models.detr.models.transformer import build_transformer
 
-import logging
+from .dvrk_policy import DVRKPolicy
+
 log = logging.getLogger(__name__)
 
 
@@ -57,23 +61,24 @@ class ACTPolicy(DVRKPolicy):
     """
 
     def __init__(
-            self,
-            lr: float,
-            weight_decay: float,
-            camera_names: List[str],
-            num_queries: int,
-            action_dim: int,
-            kl_weight: float,
-            use_language: bool,
-            language_encoder: str,
-            action_mode: Literal["hybrid_relative", "ego", "relative_endoscope"],
-            norm_scheme: Literal["std", "min_max"],
-            img_resize_cfg: DictConfig,
-            img_backbone_cfg: DictConfig,
-            transformer_cfg: DictConfig,
-            encoder_cfg: DictConfig,
-            img_aug_cfg: DictConfig
-        ):
+        self,
+        lr: float,
+        weight_decay: float,
+        camera_names: List[str],
+        num_queries: int,
+        action_dim: int,
+        kl_weight: float,
+        use_language: bool,
+        language_encoder: str,
+        action_mode: Literal["hybrid_relative", "ego", "relative_endoscope"],
+        norm_scheme: Literal["std", "min_max"],
+        img_resize_cfg: DictConfig,
+        img_backbone_cfg: DictConfig,
+        transformer_cfg: DictConfig,
+        encoder_cfg: DictConfig,
+        img_aug_cfg: DictConfig,
+        **kwargs,
+    ):
         """Initialize the policy, optimizer, and optional language encoder.
 
         Args:
@@ -101,7 +106,7 @@ class ACTPolicy(DVRKPolicy):
         # BUILD MODEL AND OPTIMIZER
         img_backbones = list()
         for _ in range(len(camera_names)):
-            img_backbone = build_image_backbone(**img_backbone_cfg) # type:ignore
+            img_backbone = build_image_backbone(**img_backbone_cfg)  # type: ignore
             img_backbones.append(img_backbone)
 
         transformer = build_transformer(transformer_cfg)
@@ -116,9 +121,11 @@ class ACTPolicy(DVRKPolicy):
             camera_names=camera_names,
             use_language=use_language,
             use_film="film" in img_backbone_cfg.backbone_type,
-        ) 
+        )
         self.optimizer = torch.optim.AdamW(
-            self._get_param_dict(self.model, img_backbone_cfg), lr=lr, weight_decay=weight_decay
+            self._get_param_dict(self.model, img_backbone_cfg),
+            lr=lr,
+            weight_decay=weight_decay,
         )
 
         self.image_normalize = transforms.Normalize(
@@ -135,7 +142,7 @@ class ACTPolicy(DVRKPolicy):
             self.language_model.eval()
 
         log.info(f"KL Weight {self.kl_weight}")
-        self.num_queries = self.model.num_queries # type:ignore
+        self.num_queries = self.model.num_queries  # type: ignore
 
     def _build_img_aug_dict(self, cfg: DictConfig):
         aug_dict = dict()
@@ -260,7 +267,7 @@ class ACTPolicy(DVRKPolicy):
 
     def _restore_checkpoint_metadata(self, model_dict: dict[str, object]) -> None:
         self.training_text_conditionings = list(
-            model_dict.get("training_text_conditionings", []) # type:ignore
+            model_dict.get("training_text_conditionings", [])  # type: ignore
         )
 
         serialized_img_resize_cfg = model_dict.get("img_resize_cfg")
@@ -275,12 +282,12 @@ class ACTPolicy(DVRKPolicy):
             )
 
     def preprocess_images(
-            self, 
-            endoscope_img: torch.Tensor, 
-            lw_img: torch.Tensor, 
-            rw_img: torch.Tensor,
-            use_augmentation: bool = False
-        ):
+        self,
+        endoscope_img: torch.Tensor,
+        lw_img: torch.Tensor,
+        rw_img: torch.Tensor,
+        use_augmentation: bool = False,
+    ):
         """Resizes images and performs image augmentation."""
 
         def resize_img(img, new_size: List):
@@ -288,21 +295,37 @@ class ACTPolicy(DVRKPolicy):
             return F.interpolate(
                 img,
                 size=(h_new, w_new),
-                mode="bilinear",        # best for images
-                align_corners=False
+                mode="bilinear",  # best for images
+                align_corners=False,
             )
-        
-        endo_processed = resize_img(endoscope_img.float(), self.img_resize_cfg["left"]).clamp(0, 255.0).to(torch.uint8)
-        lw_processed = resize_img(lw_img.float(), self.img_resize_cfg["left_wrist"]).clamp(0, 255.0).to(torch.uint8)
-        rw_processed = resize_img(rw_img.float(), self.img_resize_cfg["right_wrist"]).clamp(0, 255.0).to(torch.uint8)
+
+        endo_processed = (
+            resize_img(endoscope_img.float(), self.img_resize_cfg["left"])
+            .clamp(0, 255.0)
+            .to(torch.uint8)
+        )
+        lw_processed = (
+            resize_img(lw_img.float(), self.img_resize_cfg["left_wrist"])
+            .clamp(0, 255.0)
+            .to(torch.uint8)
+        )
+        rw_processed = (
+            resize_img(rw_img.float(), self.img_resize_cfg["right_wrist"])
+            .clamp(0, 255.0)
+            .to(torch.uint8)
+        )
 
         # AUGMENT IMAGES (input images must be [0, 255] uint8)
         # pass the endo and depth images together to get consistent augmentations
         # across the two images
         if use_augmentation:
             endo_processed = self.img_aug_dict["endoscope_img"](endo_processed)
-            lw_processed = self.img_aug_dict["lw_img"](lw_processed, apply_random_shift=False)
-            rw_processed = self.img_aug_dict["rw_img"](rw_processed, apply_random_shift=False)
+            lw_processed = self.img_aug_dict["lw_img"](
+                lw_processed, apply_random_shift=False
+            )
+            rw_processed = self.img_aug_dict["rw_img"](
+                rw_processed, apply_random_shift=False
+            )
         # output in the same dtype as original inputs ([0, 255] uint8)
 
         # Debug show augmented images...
@@ -323,15 +346,15 @@ class ACTPolicy(DVRKPolicy):
 
     def forward(
         self,
-        endoscope_img: torch.Tensor, 
-        lw_img: torch.Tensor, 
+        endoscope_img: torch.Tensor,
+        lw_img: torch.Tensor,
         rw_img: torch.Tensor,
         current_pose,
         action=None,
         action_is_pad=None,
         command_text=None,
         return_policy_actions: bool = False,
-        **kwargs
+        **kwargs,
     ):
         """Run the policy in training or inference mode.
 
@@ -369,11 +392,15 @@ class ACTPolicy(DVRKPolicy):
         # since the dVRK is so inaccurate in an absolute setting, we set the absolute
         # qpos to zero so that this will not have an impact on the model
         model_qpos = torch.zeros(
-            (batch_size, self.state_dim), dtype=rgb_img_stack.dtype, device=rgb_img_stack.device
+            (batch_size, self.state_dim),
+            dtype=rgb_img_stack.dtype,
+            device=rgb_img_stack.device,
         )
-        command_embedding = self._encode_command_text(command_text, rgb_img_stack.device)
+        command_embedding = self._encode_command_text(
+            command_text, rgb_img_stack.device
+        )
 
-        if action is not None: # training or validation
+        if action is not None:  # training or validation
             action = action.to(rgb_img_stack.device)
             if action_is_pad is None:
                 raise Exception()
@@ -404,11 +431,111 @@ class ACTPolicy(DVRKPolicy):
             return loss_dict
         else:  # pure inference time
             a_hat, _, (_, _) = self.model(
-                model_qpos, rgb_img_stack, env_state, command_embedding=command_embedding
+                model_qpos,
+                rgb_img_stack,
+                env_state,
+                command_embedding=command_embedding,
             )  # no action, sample from prior
+            # log.info(f"Processed action: {a_hat[:, 0, -1]}")
             if return_policy_actions:
                 return a_hat
             return self.postprocess_actions(a_hat, current_pose)
+
+    def forward_debug(
+        self,
+        endoscope_img: torch.Tensor,
+        lw_img: torch.Tensor,
+        rw_img: torch.Tensor,
+        current_pose,
+        action=None,
+        action_is_pad=None,
+        command_text=None,
+        return_policy_actions: bool = False,
+        **kwargs,
+    ):
+        """Run the policy in training or inference mode.
+
+        Training mode is selected by passing `actions`. In that case the method
+        converts absolute actions into the policy representation, runs the ACT
+        model, and returns a loss dictionary containing L1, KL, and total loss.
+
+        In inference mode, the method samples from the ACT prior, predicts a
+        sequence of policy actions, and either returns those raw policy-space
+        predictions or converts them into absolute robot commands.
+
+        Args:
+            image: Image batch shaped `(B, num_cameras, C, H, W)` in `[0, 1]`.
+            current_pose: Current robot pose used for action conversion.
+            actions: Optional absolute action targets. Supplying this switches
+                the method into training mode.
+            is_pad: Optional padding mask aligned with `actions`.
+            command_text: Optional command string or batch of strings for
+                language-conditioned policies.
+            return_policy_actions: In inference mode, return the raw policy
+                action tensor instead of absolute robot actions.
+
+        Returns:
+            In training mode, a dictionary of loss tensors. In inference mode,
+            either a tensor of predicted policy actions or a tensor of absolute
+            robot actions.
+        """
+        endoscope_img, lw_img, rw_img = self.preprocess_images(
+            endoscope_img, lw_img, rw_img, use_augmentation=self.training
+        )
+        # stack the images
+        rgb_img_stack = torch.stack([endoscope_img, lw_img, rw_img], dim=1)
+        env_state = None
+        batch_size = rgb_img_stack.shape[0]
+        # since the dVRK is so inaccurate in an absolute setting, we set the absolute
+        # qpos to zero so that this will not have an impact on the model
+        model_qpos = torch.zeros(
+            (batch_size, self.state_dim),
+            dtype=rgb_img_stack.dtype,
+            device=rgb_img_stack.device,
+        )
+        command_embedding = self._encode_command_text(
+            command_text, rgb_img_stack.device
+        )
+
+        if action is not None:  # training or validation
+            action = action.to(rgb_img_stack.device)
+            if action_is_pad is None:
+                raise Exception()
+            # we keep track of the various commands to send to the robot and
+            # save these in the model checkpoint
+            self._record_training_command_text(command_text)
+            processed_actions = self.prepare_actions_for_training(
+                current_pose, action, action_is_pad
+            )
+            processed_actions = processed_actions[:, : self.num_queries]
+            action_is_pad = action_is_pad[:, : self.num_queries]
+
+            a_hat, is_pad_hat, (mu, logvar) = self.model(
+                model_qpos,
+                rgb_img_stack,
+                env_state,
+                processed_actions,
+                action_is_pad,
+                command_embedding=command_embedding,
+            )
+            total_kld, dim_wise_kld, mean_kld = kl_divergence(mu, logvar)
+            loss_dict = dict()
+            all_l1 = F.l1_loss(processed_actions, a_hat, reduction="none")
+            l1 = (all_l1 * ~action_is_pad.unsqueeze(-1)).mean()
+            loss_dict["l1"] = l1
+            loss_dict["kl"] = total_kld[0]
+            loss_dict["loss"] = loss_dict["l1"] + loss_dict["kl"] * self.kl_weight
+            return loss_dict
+        else:  # pure inference time
+            a_hat, _, (_, _) = self.model(
+                model_qpos,
+                rgb_img_stack,
+                env_state,
+                command_embedding=command_embedding,
+            )  # no action, sample from prior
+            if return_policy_actions:
+                return a_hat
+            return self.postprocess_actions(a_hat, current_pose), a_hat
 
     def configure_optimizers(self):
         """Return the optimizer constructed alongside the ACT model."""
