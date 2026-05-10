@@ -1,6 +1,7 @@
 import logging
 from typing import List, Literal, Optional
 
+from collections import deque
 import torch
 from omegaconf import DictConfig, OmegaConf
 from torch.nn import functional as F
@@ -103,6 +104,16 @@ class ACTPolicy(DVRKPolicy):
         self.use_wrist_cams = use_wrist_cams
         self.history_chunk_size = history_chunk_size > 0
         self.use_history = history_chunk_size > 0
+
+        # create buffers for storing the prediction history
+        self.action_history_buffer = deque(
+            [torch.zeros(action_dim, device="cuda") for _ in range(history_chunk_size)],
+            maxlen=history_chunk_size
+        )
+        self.action_history_is_pad_buffer = deque(
+            [torch.zeros(True, device="cuda") for _ in range(history_chunk_size)],
+            maxlen=history_chunk_size
+        )
 
         # Build image augmentation pipeline.
         self.img_aug_dict = self._build_img_aug_dict(img_aug_cfg)
@@ -568,19 +579,31 @@ class ACTPolicy(DVRKPolicy):
             return loss_dict
 
         # Inference.
+
+        # build the history tensor from the model prediction history
+        action_history = torch.stack(list(self.action_history_buffer), dim=0)
+        action_history_is_pad = torch.stack(list(self.action_history_is_pad_buffer), dim=0)
+
         a_hat, _, (_, _) = self.model(
             qpos=model_qpos,
             image_stack=rgb_img_stack,
             env_state=env_state,
             command_embedding=command_embedding,
             depth_image=depth_img,
-            history=processed_history,
+            history=action_history,
             history_is_pad=action_history_is_pad,
         )
+        # keep track of action prediction history
+        self.action_history_buffer.append(a_hat.detach())
+        self.action_history_is_pad_buffer.append(torch.tensor(False, device=a_hat.device))
 
+        # this will return the normalized actions in whatever action_mode space
+        # was specified in the configuration
         if return_policy_actions:
             return a_hat
 
+        # this will process the model outputs and provide the actions in the format
+        # to send to the dVRK robot
         return self.postprocess_actions(a_hat, current_pose)
 
     def configure_optimizers(self):

@@ -5,7 +5,7 @@ from pathlib import Path
 import hydra
 from hydra.utils import instantiate
 from hydra.utils import to_absolute_path
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from srth_new.low_level_policy.inference.inference import LowLevelPolicy
 from srth_new.low_level_policy.utils import resolve_device, set_seed
@@ -19,11 +19,12 @@ from srth_new.low_level_policy.utils import resolve_device, set_seed
 def main(cfg: DictConfig) -> None:
     device = resolve_device(str(cfg.device))
     checkpoint_path = Path(to_absolute_path(str(cfg.checkpoint_path)))
+    training_cfg = OmegaConf.load(cfg.training_hydra_cfg_path)
 
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    policy = instantiate(cfg.policy).to(device)
+    policy = instantiate(training_cfg.policy).to(device)
     policy.load_checkpoint(checkpoint_path, map_location=device)
     policy.eval()
 
