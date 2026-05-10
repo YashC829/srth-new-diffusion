@@ -135,17 +135,30 @@ class Transformer(nn.Module):
             query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
             # mask = mask.flatten(1)
 
-            additional_pos_embed = additional_pos_embed.unsqueeze(1).repeat(
-                1, bs, 1
-            )  # seq, bs, dim
+            conditioning_tokens = [
+                latent_input.unsqueeze(1),
+                proprio_input.unsqueeze(1),
+            ]
+            if command_embedding is not None:
+                if command_embedding.ndim == 2:
+                    command_embedding = command_embedding.unsqueeze(1)
+                conditioning_tokens.append(command_embedding)
+
+            conditioning_tokens = torch.cat(conditioning_tokens, axis=1)
+            conditioning_seq_len = conditioning_tokens.shape[1]
+
+            if additional_pos_embed.shape[0] < conditioning_seq_len:
+                raise ValueError(
+                    "additional_pos_embed does not provide enough positional "
+                    f"embeddings for {conditioning_seq_len} conditioning tokens."
+                )
+
+            additional_pos_embed = additional_pos_embed[
+                :conditioning_seq_len
+            ].unsqueeze(1).repeat(1, bs, 1)  # seq, bs, dim
             pos_embed = torch.cat([additional_pos_embed, pos_embed], axis=0)
 
-            if command_embedding is not None:
-                addition_input = torch.stack(
-                    [latent_input, proprio_input, command_embedding], axis=0
-                )
-            else:
-                addition_input = torch.stack([latent_input, proprio_input], axis=0)
+            addition_input = conditioning_tokens.permute(1, 0, 2)
             src = torch.cat([addition_input, src], axis=0)
         else:
             assert len(src.shape) == 3

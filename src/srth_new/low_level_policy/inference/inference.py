@@ -458,7 +458,7 @@ class LowLevelPolicy:
             if self._shutdown_event.is_set() or self.is_ros_shutdown():
                 return
             self.rt.node.get_logger().info(f"PSM2 Action: {actions_psm2[jj]}")
-            # self.psm1_app.run_full_pose_goal(actions_psm1[jj])
+            self.psm1_app.run_full_pose_goal(actions_psm1[jj])
             self.psm2_app.run_full_pose_goal(actions_psm2[jj], self.rt.psm2_jaw)
             _, _, _, action_execution_period, _ = self.get_runtime_controls()
             sleep_deadline = time.monotonic() + action_execution_period
