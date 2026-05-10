@@ -84,8 +84,8 @@ class ACTPolicy(DVRKPolicy):
         transformer_cfg: DictConfig,
         encoder_cfg: DictConfig,
         img_aug_cfg: DictConfig,
-        use_depth: bool = True,
-        use_history: bool = True,
+        use_depth: bool,
+        use_wrist_cams: bool
     ):
         """Initialize the policy, optimizer, and optional conditioning modules."""
         super().__init__(
@@ -100,8 +100,8 @@ class ACTPolicy(DVRKPolicy):
         self.use_language = use_language
         self.language_encoder = language_encoder
         self.use_depth = use_depth
-        self.use_history = use_history
-        self.history_chunk_size = history_chunk_size
+        self.use_wrist_cams = use_wrist_cams
+        self.history_chunk_size = history_chunk_size > 0
         self.use_history = history_chunk_size > 0
 
         # Build image augmentation pipeline.
@@ -110,6 +110,10 @@ class ACTPolicy(DVRKPolicy):
         # Optional depth model.
         self.MAX_DEPTH_VAL = 0.3
         self.depth_model = load_depth_model("dav2") if self.use_depth else None
+
+        # if we don't want to use wrist cameras, remove them from the camera names
+        if not use_wrist_cams:
+            camera_names = ["left"]
 
         # Build image backbones.
         img_backbones = []
@@ -348,8 +352,8 @@ class ACTPolicy(DVRKPolicy):
     def preprocess_images(
         self,
         endoscope_img: torch.Tensor,
-        lw_img: torch.Tensor,
-        rw_img: torch.Tensor,
+        lw_img: Optional[torch.Tensor] = None,
+        rw_img: Optional[torch.Tensor] = None,
         use_augmentation: bool = False,
     ):
         """Resize images, optionally compute depth, and apply augmentation.
@@ -376,16 +380,18 @@ class ACTPolicy(DVRKPolicy):
             .clamp(0, 255.0)
             .to(torch.uint8)
         )
-        lw_processed = (
-            resize_img(lw_img.float(), self.img_resize_cfg["left_wrist"])
-            .clamp(0, 255.0)
-            .to(torch.uint8)
-        )
-        rw_processed = (
-            resize_img(rw_img.float(), self.img_resize_cfg["right_wrist"])
-            .clamp(0, 255.0)
-            .to(torch.uint8)
-        )
+        lw_processed = None; rw_processed = None
+        if self.use_wrist_cams:
+            lw_processed = (
+                resize_img(lw_img.float(), self.img_resize_cfg["left_wrist"])
+                .clamp(0, 255.0)
+                .to(torch.uint8)
+            )
+            rw_processed = (
+                resize_img(rw_img.float(), self.img_resize_cfg["right_wrist"])
+                .clamp(0, 255.0)
+                .to(torch.uint8)
+            )
 
         depth_processed = None
         if depth_img is not None:
@@ -407,19 +413,22 @@ class ACTPolicy(DVRKPolicy):
                     apply_random_shift=False,
                 )
 
-            lw_processed = self.img_aug_dict["lw_img"](
-                lw_processed,
-                apply_random_shift=False,
-            )
-            rw_processed = self.img_aug_dict["rw_img"](
-                rw_processed,
-                apply_random_shift=False,
-            )
+            if self.use_wrist_cams:
+                lw_processed = self.img_aug_dict["lw_img"](
+                    lw_processed,
+                    apply_random_shift=False,
+                )
+                rw_processed = self.img_aug_dict["rw_img"](
+                    rw_processed,
+                    apply_random_shift=False,
+                )
 
         # Normalize RGB images with ImageNet mean/std.
         endo_processed = self.image_normalize(endo_processed / 255.0)
-        lw_processed = self.image_normalize(lw_processed / 255.0)
-        rw_processed = self.image_normalize(rw_processed / 255.0)
+        
+        if self.use_wrist_cams:
+            lw_processed = self.image_normalize(lw_processed / 255.0)
+            rw_processed = self.image_normalize(rw_processed / 255.0)
 
         # Normalize depth with min/max normalization.
         if depth_processed is not None:
@@ -478,14 +487,18 @@ class ACTPolicy(DVRKPolicy):
             either a tensor of predicted policy actions or a tensor of absolute
             robot actions.
         """
-        endoscope_img, depth_img, lw_img, rw_img = self.preprocess_images(
+        endoscope_img, depth_img, lw_img_, rw_img_ = self.preprocess_images(
             endoscope_img,
             lw_img,
             rw_img,
             use_augmentation=self.training,
         )
 
-        rgb_img_stack = torch.stack([endoscope_img, lw_img, rw_img], dim=1)
+        if self.use_wrist_cams:
+            assert lw_img_ is not None and rw_img_ is not None
+            rgb_img_stack = torch.stack([endoscope_img, lw_img_, rw_img_], dim=1)
+        else:
+            rgb_img_stack = endoscope_img.unsqueeze(1)
 
         env_state = None
         batch_size = rgb_img_stack.shape[0]
