@@ -26,6 +26,8 @@ DVRK_COMPUTER_IP = os.environ.get("DVRK_COMPUTER_IP")
 if DVRK_COMPUTER_IP is None:
     raise Exception(f"Must set dvrk computer IP address with: export DVRK_COMPUTER_IP=<ip_addr>")
 
+MAX_CHUNK_EXECUTION_SIZE = 60
+
 class LowLevelPolicy:
 
     ## ----------------- initializations ----------------
@@ -34,12 +36,11 @@ class LowLevelPolicy:
             policy: ACTPolicy,
             prediction_frequency_hz: float,
             action_execution_hz: float,
-            enable_gui: bool = True,
-            start_paused: bool = True,
+            enable_gui: bool = True
         ):
         self.policy = policy
         self.enable_gui = enable_gui
-        self.start_paused = bool(start_paused)
+        self.start_paused = True
         
         self.command = self._get_initial_command()
         self.init_threading_params()
@@ -68,7 +69,7 @@ class LowLevelPolicy:
         
     def init_threading_params(self):
         self._manual_pause = self.enable_gui and self.start_paused
-        self._ros_pause = False
+        self._ros_pause = True
         self._execution_thread = None
         self._execution_stop_event = None
         self._inference_thread = None
@@ -85,8 +86,8 @@ class LowLevelPolicy:
         self.psm2_app = example_application(self.ral, "PSM2", 5.0)
         self.pause_sub = self.ral._node.create_subscription(
             Bool,
-            "/pause_robot",
-            self.pause_robot_callback,
+            "/pause_inference",
+            self.pause_inference_callback,
             10,
         )
 
@@ -133,7 +134,7 @@ class LowLevelPolicy:
 
     ## --------------------- callbacks -----------------------
     
-    def pause_robot_callback(self, msg):
+    def pause_inference_callback(self, msg):
         self._ros_pause = msg.data
         
         if self._ros_pause:
@@ -393,7 +394,10 @@ class LowLevelPolicy:
         current_pose, _, _ = self.get_current_pose()
         _, _, _, _, command = self.get_runtime_controls()
         action = (
-            self.policy(endo_img, lw_img, rw_img, current_pose, command_text=command)
+            self.policy(
+                endo_img, lw_img, rw_img, current_pose, 
+                command_text=command, max_inference_chunk_size=MAX_CHUNK_EXECUTION_SIZE
+            )
             .cpu()
             .numpy()
             .squeeze(0)
@@ -445,15 +449,19 @@ class LowLevelPolicy:
 
     def execute_actions_sequential(self, actions_psm1, actions_psm2):
         num_steps = min(self.policy.num_queries, len(actions_psm1), len(actions_psm2))
-        max_steps = 40
+        was_paused = False
         for jj in range(num_steps):
-            if jj > max_steps:
-                break
             if self._shutdown_event.is_set() or self.is_ros_shutdown():
                 return
 
             while self.is_paused() and not self._shutdown_event.is_set():
                 time.sleep(0.01)
+                was_paused = True
+
+            # this allows us to break out of a stale action execution if the model
+            # was paused
+            if was_paused:
+                return
 
             if self._shutdown_event.is_set() or self.is_ros_shutdown():
                 return

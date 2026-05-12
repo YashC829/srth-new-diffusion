@@ -459,6 +459,8 @@ def iter_lerobot_frames_from_ep(
 
     esu_signal = kinematics[constants.HEADER_NAME_ESU_SIGNAL].to_numpy()
 
+    
+
     camera_paths = {
         "images.endoscope.left": left_endo_files,
         "images.endoscope.right": right_endo_files,

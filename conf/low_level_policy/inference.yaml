@@ -5,6 +5,8 @@ defaults:
 device: cuda
 checkpoint_path: ??? # Required path to a saved checkpoint.
 training_hydra_cfg_path: ??? # Required path to the training hydra config that corresponds to your checkpoint
+prediction_frequency_hz: 5.0
+action_execution_hz: 20.0
 enable_gui: true
 
 hydra:

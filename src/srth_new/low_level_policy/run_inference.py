@@ -8,7 +8,7 @@ from hydra.utils import to_absolute_path
 from omegaconf import DictConfig, OmegaConf
 
 from srth_new.low_level_policy.inference.inference import LowLevelPolicy
-from srth_new.low_level_policy.utils import resolve_device, set_seed
+from srth_new.low_level_policy.utils import resolve_device
 
 
 @hydra.main(
@@ -33,7 +33,7 @@ def main(cfg: DictConfig) -> None:
         prediction_frequency_hz=cfg.prediction_frequency_hz,
         action_execution_hz=cfg.action_execution_hz,
         enable_gui=cfg.enable_gui,
-        start_paused=cfg.start_paused,
+        # start_paused=cfg.start_paused,
     )
     low_level_policy.run()
 

@@ -111,7 +111,7 @@ class ACTPolicy(DVRKPolicy):
             maxlen=history_chunk_size
         )
         self.action_history_is_pad_buffer = deque(
-            [torch.zeros(True, device="cuda") for _ in range(history_chunk_size)],
+            [torch.tensor(True, device="cuda") for _ in range(history_chunk_size)],
             maxlen=history_chunk_size
         )
 
@@ -464,6 +464,7 @@ class ACTPolicy(DVRKPolicy):
         action_history: Optional[torch.Tensor] = None,
         action_history_is_pad: Optional[torch.Tensor] = None,
         return_policy_actions: bool = False,
+        max_inference_chunk_size: int = 100000,
         **kwargs
     ):
         """Run the policy in training or inference mode.
@@ -528,16 +529,6 @@ class ACTPolicy(DVRKPolicy):
         )
 
         processed_history = None
-        if self.use_history:
-            assert action_history is not None
-            assert action_history_is_pad is not None
-            processed_history = self.prepare_actions_for_training(
-                current_pose,
-                action_history,
-                action_history_is_pad,
-            )
-            processed_history = processed_history.to(rgb_img_stack.device)
-            action_history_is_pad = action_history_is_pad.to(rgb_img_stack.device)
 
         if action is not None:
             action = action.to(rgb_img_stack.device)
@@ -553,6 +544,17 @@ class ACTPolicy(DVRKPolicy):
             )
             processed_actions = processed_actions[:, : self.num_queries]
             action_is_pad = action_is_pad[:, : self.num_queries]
+
+            if self.use_history:
+                assert action_history is not None
+                assert action_history_is_pad is not None
+                processed_history = self.prepare_actions_for_training(
+                    current_pose,
+                    action_history,
+                    action_history_is_pad,
+                )
+                processed_history = processed_history.to(rgb_img_stack.device)
+                action_history_is_pad = action_history_is_pad.to(rgb_img_stack.device)
 
             a_hat, is_pad_hat, (mu, logvar) = self.model(
                 qpos=model_qpos,
@@ -581,8 +583,9 @@ class ACTPolicy(DVRKPolicy):
         # Inference.
 
         # build the history tensor from the model prediction history
-        action_history = torch.stack(list(self.action_history_buffer), dim=0)
-        action_history_is_pad = torch.stack(list(self.action_history_is_pad_buffer), dim=0)
+        if self.use_history:
+            action_history = torch.stack(list(self.action_history_buffer), dim=0).unsqueeze(0)
+            action_history_is_pad = torch.stack(list(self.action_history_is_pad_buffer), dim=0).unsqueeze(0)
 
         a_hat, _, (_, _) = self.model(
             qpos=model_qpos,
@@ -593,9 +596,16 @@ class ACTPolicy(DVRKPolicy):
             history=action_history,
             history_is_pad=action_history_is_pad,
         )
+
+        if max_inference_chunk_size < self.num_queries:
+            a_hat = a_hat[:, :max_inference_chunk_size]
+
         # keep track of action prediction history
-        self.action_history_buffer.append(a_hat.detach())
-        self.action_history_is_pad_buffer.append(torch.tensor(False, device=a_hat.device))
+        if self.use_history:
+            self.action_history_buffer.extend(a_hat.detach().squeeze(0))
+            self.action_history_is_pad_buffer.extend(
+                torch.zeros(a_hat.shape[1], dtype=torch.bool, device=a_hat.device)
+            )
 
         # this will return the normalized actions in whatever action_mode space
         # was specified in the configuration
