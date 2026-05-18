@@ -440,7 +440,8 @@ class DETRVAE(nn.Module):
                         "in __init__."
                     )
 
-                depth_3d = self.depth_1d_to_3d_proj(depth_image)
+                # depth_3d = self.depth_1d_to_3d_proj(depth_image)
+                depth_3d = depth_image
 
                 depth_features, _ = self._forward_backbone(
                     self.depth_backbone,

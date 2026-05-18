@@ -3,10 +3,14 @@ from typing import List, Literal, Optional
 
 from collections import deque
 import torch
+import numpy as np
+from matplotlib import colormaps as cm
+from PIL import Image
 from omegaconf import DictConfig, OmegaConf
 from torch.nn import functional as F
 from torchvision import transforms
 
+from srth_new.general import constants
 from srth_new.general.third_party.EndoSynth.endosynth.models import (
     load as load_depth_model,
 )
@@ -23,6 +27,44 @@ from srth_new.low_level_policy.models.dvrk_policy import DVRKPolicy
 
 log = logging.getLogger(__name__)
 
+def depth2rgb(x: torch.Tensor, dmin: float, dmax: float) -> torch.Tensor:
+    """
+    Map depth to RGB using RdYlBu:
+    low depth → red, high depth → blue.
+
+    Input:
+        x: Tensor of shape [B, 1, H, W]
+
+    Output:
+        Tensor of shape [B, 3, H, W]
+    """
+    cmap = cm.get_cmap("RdYlBu")
+
+    span = max(dmax - dmin, 1e-12)
+
+    # Normalize to [0, 1]
+    t = (torch.clamp(x, dmin, dmax) - dmin) / span
+
+    # Remove channel dimension for colormap
+    # [B, 1, H, W] -> [B, H, W]
+    t_np = t.squeeze(1).detach().cpu().numpy()
+
+    # Apply matplotlib colormap
+    # Output shape: [B, H, W, 4]
+    rgba = cmap(t_np)
+
+    # Keep RGB only and convert to torch
+    # [B, H, W, 3]
+    rgb = torch.from_numpy(rgba[..., :3]).to(
+        device=x.device,
+        dtype=torch.float32,
+    )
+
+    # Convert to channel-first
+    # [B, H, W, 3] -> [B, 3, H, W]
+    rgb = rgb.permute(0, 3, 1, 2)
+
+    return torch.clamp(rgb * 255, 0, 255).to(torch.uint8)
 
 def kl_divergence(mu, logvar):
     batch_size = mu.size(0)
@@ -353,7 +395,7 @@ class ACTPolicy(DVRKPolicy):
                 serialized_img_resize_cfg
             )
 
-    def _get_depth(self, img: torch.Tensor):
+    def _get_depth(self, img: torch.Tensor) -> torch.Tensor:
         """Given an RGB image, generate the depth map for the image."""
         if self.depth_model is None:
             return None
@@ -375,7 +417,16 @@ class ACTPolicy(DVRKPolicy):
             lw_processed: normalized left wrist RGB image
             rw_processed: normalized right wrist RGB image
         """
-        depth_img = self._get_depth(endoscope_img) if self.use_depth else None
+        if self.use_depth:
+            depth_1d = self._get_depth(endoscope_img)
+            depth_img = depth2rgb(depth_1d, constants.DEPTH_MIN, constants.DEPTH_MAX).to(torch.uint8)
+            # for idx, depth_img_ in enumerate(depth_img):
+            #     temp = depth_img_.detach().cpu().numpy()
+            #     temp = temp.transpose(1, 2, 0)
+            #     Image.fromarray(temp).save(f"depth_img_{idx}.png")
+            #     temp = endoscope_img[idx].detach().cpu().numpy()
+            #     temp = temp.transpose(1, 2, 0)
+            #     Image.fromarray(temp).save(f"endo_img_{idx}.png")
 
         def resize_img(img, new_size: List):
             h_new, w_new = new_size[0], new_size[1]
@@ -393,6 +444,10 @@ class ACTPolicy(DVRKPolicy):
         )
         lw_processed = None; rw_processed = None
         if self.use_wrist_cams:
+            if lw_img is None or rw_img is None:
+                raise Exception(
+                    "If using wrist cameras, must pass both left and right wrist "
+                    "images to the policy forward function.")
             lw_processed = (
                 resize_img(lw_img.float(), self.img_resize_cfg["left_wrist"])
                 .clamp(0, 255.0)
@@ -405,7 +460,7 @@ class ACTPolicy(DVRKPolicy):
             )
 
         depth_processed = None
-        if depth_img is not None:
+        if self.use_depth:
             depth_processed = resize_img(depth_img.float(), self.img_resize_cfg["left"])
 
         # Augment images.
@@ -441,14 +496,14 @@ class ACTPolicy(DVRKPolicy):
             lw_processed = self.image_normalize(lw_processed / 255.0)
             rw_processed = self.image_normalize(rw_processed / 255.0)
 
-        # Normalize depth with min/max normalization.
-        if depth_processed is not None:
-            depth_processed = torch.clamp(
-                depth_processed,
-                min=0.0,
-                max=self.MAX_DEPTH_VAL,
-            )
-            depth_processed = depth_processed / self.MAX_DEPTH_VAL
+        # # Normalize depth with min/max normalization.
+        # if self.use_depth:
+        #     depth_processed = torch.clamp(
+        #         depth_processed,
+        #         min=0.0,
+        #         max=self.MAX_DEPTH_VAL,
+        #     )
+        #     depth_processed = depth_processed / self.MAX_DEPTH_VAL
 
         return endo_processed, depth_processed, lw_processed, rw_processed
 

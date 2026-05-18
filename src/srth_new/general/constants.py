@@ -3,6 +3,9 @@ import json
 import os
 from pathlib import Path
 
+DEPTH_MIN = 0.0
+DEPTH_MAX = 0.3
+
 # lerobot dataset constants
 FPS = 30
 ROBOT_NAME = "dvrk-si"

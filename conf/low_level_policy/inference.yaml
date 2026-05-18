@@ -3,8 +3,8 @@ defaults:
   - _self_
 
 device: cuda
-checkpoint_path: ??? # Required path to a saved checkpoint.
-training_hydra_cfg_path: ??? # Required path to the training hydra config that corresponds to your checkpoint
+checkpoint_path: /home/grayson/surpass/srth-new/saved_runs/train_05_08_2026_basic_act/checkpoints/train_step_280000.ckpt # Required path to a saved checkpoint.
+training_hydra_cfg_path: /home/grayson/surpass/srth-new/saved_runs/train_05_08_2026_basic_act/.hydra/config.yaml # Required path to the training hydra config that corresponds to your checkpoint
 prediction_frequency_hz: 5.0
 action_execution_hz: 20.0
 enable_gui: true
