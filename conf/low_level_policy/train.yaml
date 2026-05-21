@@ -23,6 +23,7 @@ train:
   validate_every: 1000         # Run the validation loop every N training steps.
   checkpoint_dir: ${hydra:runtime.output_dir}/checkpoints
   resume_checkpoint: null   # Optional checkpoint path to resume model/optimizer/scheduler state from.
+  training_hydra_cfg_path: null # Optional path to the hydra config.yaml file that was used to train the checkpoint
 
 wandb:
   project: surpass_debugging              # W&B project name.

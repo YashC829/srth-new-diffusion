@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import logging
 import os
 from pathlib import Path
+from typing import Tuple
 
 import hydra
 import torch
 import wandb
 from hydra.utils import instantiate, to_absolute_path
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from torch.optim.lr_scheduler import LambdaLR
 from tqdm import tqdm
 
+from srth_new.low_level_policy.models.dvrk_policy import DVRKPolicy
 from srth_new.low_level_policy import utils
 
 log = logging.getLogger(__name__)
@@ -19,13 +22,11 @@ log = logging.getLogger(__name__)
 
 def resume_training_state(
     train_cfg: DictConfig,
-    policy,
+    policy: DVRKPolicy,
     scheduler: LambdaLR,
     device: torch.device,  # type: ignore
 ) -> int:
     resume_checkpoint = train_cfg.resume_checkpoint
-    if not resume_checkpoint:
-        return 0
 
     checkpoint_path = Path(to_absolute_path(str(resume_checkpoint)))
     if not checkpoint_path.exists():
@@ -63,10 +64,28 @@ def log_to_wandb(metrics, summary_prefix, epoch, step):
 
 
 def validate(cfg: DictConfig):
-    if cfg.wandb.resume and not cfg.train.resume_checkpoint:
-        raise Exception(
-            "wandb.resume=true but train.resume_checkpoint is unset. incompatible behavior"
-        )
+    if (
+        not cfg.wandb.resume 
+        and not cfg.train.resume_checkpoint 
+        and not cfg.train.training_hydra_cfg_path
+    ):
+        return
+    
+    elif (
+        cfg.wandb.resume
+        and cfg.train.resume_checkpoint
+        and cfg.train.training_hydra_cfg_path
+    ):
+        return
+
+    else:
+        raise Exception(f"Invalid hydra training config. It seems you might be "
+                        "trying to resume training from a prior config. "
+                        "To train from scratch, cfg.wandb.resume, cfg.train.resume_checkpoint,"
+                        "and cfg.train.training_hydra_cfg_path must all be either null or false. "
+                        "To resume, these parameters must all be set. Right now, these"
+                        "parameters are partially set, therefore your intention is ambiguous and,"
+                        "thus, invalid.")
 
 
 def run_training(
@@ -171,7 +190,10 @@ def main(cfg: DictConfig) -> None:
     utils.set_seed(int(cfg.seed))
     device = utils.resolve_device(str(cfg.device))
     train_loader, val_loader, dataset_stats = utils.load_dataloaders(cfg.dataloader)
-    policy = instantiate(cfg.policy).to(device)
+    policy_cfg = cfg.policy
+    if cfg.train.training_hydra_cfg_path:
+        policy_cfg = OmegaConf.load(cfg.train.training_hydra_cfg_path).policy
+    policy = instantiate(policy_cfg).to(device)
     policy.set_dataset_stats(dataset_stats)
     optimizer = policy.configure_optimizers()
     scheduler = utils.get_cosine_schedule_with_warmup(
@@ -179,7 +201,9 @@ def main(cfg: DictConfig) -> None:
         num_warmup_steps=cfg.train.num_warmup_steps,
         num_training_steps=cfg.train.num_train_steps,
     )
-    start_step = resume_training_state(cfg.train, policy, scheduler, device)
+    start_step = 0
+    if cfg.train.resume_checkpoint:
+        start_step = resume_training_state(cfg.train, policy, scheduler, device)
     run_training(
         cfg.train,
         policy,

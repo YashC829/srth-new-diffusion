@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import logging
 import math
@@ -201,6 +202,7 @@ def save_wandb_run_id(run_id: str) -> Path:
 
 
 def wandb_setup(cfg: DictConfig) -> DictConfig:
+
     wandb_id = cfg.wandb.id
     resume_checkpoint = OmegaConf.select(cfg, "train.resume_checkpoint")
 
@@ -214,27 +216,42 @@ def wandb_setup(cfg: DictConfig) -> DictConfig:
         if not wandb_id:
             raise ValueError("cfg.wandb.id must be set when cfg.wandb.resume=True")
 
+        if cfg.train.training_hydra_cfg_path:
+            prior_training_cfg = OmegaConf.load(cfg.train.training_hydra_cfg_path)
+        else:
+            raise Exception(f"If wandb resume is set, train.training_hydra_cfg_path must also be set.")
+
         restored = restore_hydra_state_from_wandb(
-            cfg.wandb.entity,
-            cfg.wandb.project,
+            prior_training_cfg.wandb.entity,
+            prior_training_cfg.wandb.project,
             wandb_id,
         )
-        cfg = restored["config"]
-        cfg.train.resume_checkpoint = resume_checkpoint
+        prior_training_cfg = restored["config"]
         resume_mode = "must"
+
+        run = wandb.init(
+            project=prior_training_cfg.wandb.project,
+            entity=prior_training_cfg.wandb.entity,
+            name=prior_training_cfg.wandb.name,
+            id=wandb_id,
+            resume=resume_mode,
+            mode=prior_training_cfg.wandb.mode,
+            config=OmegaConf.to_container(prior_training_cfg, resolve=True, throw_on_missing=True),
+        )
+
     else:
         wandb_id = wandb_id or wandb.util.generate_id()
         resume_mode = None
 
-    run = wandb.init(
-        project=cfg.wandb.project,
-        entity=cfg.wandb.entity,
-        name=cfg.wandb.name,
-        id=wandb_id,
-        resume=resume_mode,
-        mode=cfg.wandb.mode,
-        config=OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True),
-    )
+        run = wandb.init(
+            project=cfg.wandb.project,
+            entity=cfg.wandb.entity,
+            name=cfg.wandb.name,
+            id=wandb_id,
+            resume=resume_mode,
+            mode=cfg.wandb.mode,
+            config=OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True),
+        )
     cfg.wandb.resume = wandb_resume
     cfg.wandb.id = getattr(run, "id", wandb_id) or wandb_id
     save_wandb_run_id(getattr(run, "id", wandb_id) or wandb_id)
