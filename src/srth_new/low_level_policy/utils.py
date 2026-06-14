@@ -511,6 +511,9 @@ def collect_data(data, device: torch.device):
         action_data,
         action_is_pad,
         command_text,
+        affordance_kp,
+        tool_kp,
+        original_ep_dir
     ) = data
     endoscope_img = endoscope_img.to(device)
     lw_img = lw_img.to(device)
@@ -525,4 +528,7 @@ def collect_data(data, device: torch.device):
         "action": action_data,
         "action_is_pad": action_is_pad.to(device),
         "command_text": list(command_text),
+        "affordance_kp": affordance_kp,
+        "tool_kp": tool_kp,
+        "original_ep_dir": original_ep_dir
     }

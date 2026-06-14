@@ -120,3 +120,33 @@ python src/srth-new/low_level_policy/train.py
 python src/srth-new/low_level_policy/run_inference.py \ 
   checkpoint_path=<path_to_checkpoint_file>
 ```
+
+# Running Inference for Jacob Demo 5/30/26
+
+To run inference, several things need to happen.
+
+## On the DVRK desktop
+
+Run all of the normal scripts to pull up the GUI, etc.
+
+Do NOT run the normal data collection code. Instead, run:
+
+```bash
+ros2 run rqt_mypkg_record_op_pedals_ros2 zmq_image_bridge
+```
+
+This will bridge all of the image topics via zmq.
+
+## On your personal laptop
+
+You will need to remote into Popeye on your remote laptop. It is very helpful to do this with a remote desktop software for visualization purposes. I recommend you try to get this working because the GUI for inference is very useful. It's not absolutely critical, but if you want to be able to pause and restart, it's pretty important.
+
+Run the following to run inference in your remote desktop:
+
+```bash
+python src/srth-new/low_level_policy/run_inference.py \
+  checkpoint_path=/home/grayson/surpass/srth-new/saved_runs/train_05_08_2026_basic_act/checkpoints/train_step_280000.ckpt \
+  training_hydra_cfg_path=/home/grayson/surpass/srth-new/saved_runs/train_05_08_2026_basic_act/.hydra/config.yaml
+```
+
+This should bring up the GUI for inference if everything is setup correctly. If anything is not working properly, you can call me.

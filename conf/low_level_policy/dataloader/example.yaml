@@ -1,4 +1,4 @@
-repo_id: surpass/cholecystectomy
+repo_id: surpass/cholecystectomy_5_29_26
 
 tissue_sample_ids_train:
   [
@@ -12,6 +12,13 @@ tissue_sample_ids_train:
     Tissue#9,
     Tissue#10,
     Tissue#11,
+    Tissue#12,
+    Tissue#13,
+    Tissue#14,
+    Tissue#15,
+    Tissue#16,
+    Tissue#17,
+    Tissue#18
   ]
 tissue_sample_ids_val: [Tissue#1]
 batch_size: 12 # Batch size for both train and validation dataloaders.

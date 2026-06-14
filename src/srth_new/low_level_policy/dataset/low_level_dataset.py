@@ -1,5 +1,6 @@
 """This is taken directly from the original SRTH code. Modifications are minimal."""
 
+import shutil
 import logging
 from typing import List
 
@@ -107,6 +108,9 @@ class DvrkLerobotDataset(torch.utils.data.Dataset):
         action_is_pad = sample["action_is_pad"][self.history_chunk_size:]
         command_text = sample["task"]
 
+        tool_kp = sample["tool_kp"] if "tool_kp" in sample else None
+        affordance_kp = sample["affordance_kp"] if "affordance_kp" in sample else None 
+
         # handle the action history
         if self.history_chunk_size > 0:
             action_history = sample["action"][:self.history_chunk_size]
@@ -124,13 +128,22 @@ class DvrkLerobotDataset(torch.utils.data.Dataset):
             action_history_is_pad,
             action,
             action_is_pad,
-            command_text
+            command_text,
+            affordance_kp,
+            tool_kp,
+            sample["original_ep_dir"]
         )
 
 
 if __name__ == "__main__":
 
-    from srth_new.low_level_policy.utils import collect_data
+    from srth_new.low_level_policy import utils
+    from PIL import Image, ImageDraw
+    from pathlib import Path
+    import os
+
+    debug_dir = Path("./debug_dataset_annotations")
+    os.makedirs(debug_dir, exist_ok=True)
 
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -140,63 +153,65 @@ if __name__ == "__main__":
         {
             "unzipping": [
                 "1_grabbing_gallbladder_right",
-                # "1_grabbing_gallbladder_right_recovery",
-                # "2_initial_incision",
-                # "2_initial_incision_recovery",
-                # "3_hook_to_local_home",
-                # "4_hook_tissue",
-                # "4_hook_tissue_recovery",
-                # "5_cauterize_tissue_right",
-                # "6_hook_to_global_home",
-                # "7_grasper_to_home",
-                # "8_grabbing_gallbladder_left",
-                # "8_grabbing_gallbladder_left_recovery",
-                # "9_returning_to_initial_incision",
-                # "9_returning_to_initial_incision_recovery",
-                # "10_cauterize_tissue_left",
-                # "11_regrab",
-                # "12_hook_to_global_home",
-                # "13_grasper_to_home",
+                "1_grabbing_gallbladder_right_recovery",
+                "2_initial_incision",
+                "2_initial_incision_recovery",
+                "3_hook_to_local_home",
+                "4_hook_tissue",
+                "4_hook_tissue_recovery",
+                "5_cauterize_tissue_right",
+                "6_hook_to_global_home",
+                "7_grasper_to_home",
+                "8_grabbing_gallbladder_left",
+                "8_grabbing_gallbladder_left_recovery",
+                "9_returning_to_initial_incision",
+                "9_returning_to_initial_incision_recovery",
+                "10_cauterize_tissue_left",
+                "11_regrab",
+                "12_hook_to_global_home",
+                "13_grasper_to_home",
             ],
         }
     )
 
     dataset = DvrkLerobotDataset(
-        repo_id="surpass/cholecystectomy",
-        tissue_sample_ids=["Tissue#1", "Tissue#2", "Tissue#3", "Tissue#4", "Tissue#5", "Tissue#6", "Tissue#7", "Tissue#8", "Tissue#9", "Tissue#10", "Tissue#11"],
+        repo_id="surpass/cholecystectomy_debug",
+        tissue_sample_ids=[
+            "Tissue#1", "Tissue#2", "Tissue#3", "Tissue#4", "Tissue#5",
+            "Tissue#6", "Tissue#7", "Tissue#8", "Tissue#9", "Tissue#10", "Tissue#11",
+        ],
         phases=phases,
-        history_chunk_size=100,
+        history_chunk_size=0,
         future_chunk_size=100,
     )
-    temp = dataset[0]
 
-    from torch.utils.data import DataLoader
+    # visualize annotated data
+    num_samples = 1000
+    for i in range(num_samples):
+        sample = dataset[i]
+        data = utils.collect_data(sample, device=torch.device("cpu"))
 
-    train_dataloader = DataLoader(
-        dataset,
-        batch_size=12,
-        shuffle=True,
-        pin_memory=True,
-        num_workers=12,
-        persistent_workers=True,
-    )
+        endo_img = data["endoscope_img"]
+        tool_kp = data["tool_kp"]
+        affordance_kp = data["affordance_kp"]
 
-    for data in train_dataloader:
-        inputs = collect_data(data, torch.device('cpu'))
-        if torch.min(inputs["action"][:, 0, 7]) < 0:
-            pass
-        if torch.min(inputs["action"][:, 0, -1]) < 0:
-            pass
-        pass
+        # Convert CHW -> HWC for PIL
+        img_np = endo_img.permute(1, 2, 0).cpu().numpy()
+        img = Image.fromarray(img_np)
+        draw = ImageDraw.Draw(img)
 
-    from PIL import Image
+        def draw_kp(kp, color, label):
+            x, y = kp.tolist()
+            x, y = int(round(x)), int(round(y))
 
-    def convert(img):
-        return (img * 255).to(torch.uint8)
+            r = 6
+            draw.ellipse((x - r, y - r, x + r, y + r), fill=color, outline=color)
+            draw.text((x + 8, y - 8), label, fill=color)
 
-    Image.fromarray(convert(endo_img).cpu().numpy().transpose(1, 2, 0)).save(
-        "endo_img.png"
-    )
-    Image.fromarray(convert(lw_img).cpu().numpy().transpose(1, 2, 0)).save("lw_img.png")
-    Image.fromarray(convert(rw_img).cpu().numpy().transpose(1, 2, 0)).save("rw_img.png")
+        draw_kp(tool_kp, "red", "tool")
+        draw_kp(affordance_kp, "yellow", "aff")
+
+        out_path = debug_dir / f"{sample[-1]}_{i:04d}.png".replace("/", "_")
+        
+        img.save(out_path)
 
