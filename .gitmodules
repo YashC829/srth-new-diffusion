@@ -1,3 +1,6 @@
 [submodule "src/srth_new/general/third_party/EndoSynth"]
 	path = src/srth_new/general/third_party/EndoSynth
 	url = git@github.com:gbyrd-research/EndoSynth.git
+[submodule "src/srth_new/general/third_party/co-tracker"]
+	path = src/srth_new/general/third_party/co-tracker
+	url = https://github.com/facebookresearch/co-tracker.git
