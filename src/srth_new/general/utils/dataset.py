@@ -51,7 +51,7 @@ def get_episode_directories_by_tissue_id_and_phase(
     num_episodes_info = dict()
     for id in tissue_ids:
         samples[id] = {}
-        tissue_dir = os.path.join(dataset_dir, f"tissue_{id}")
+        tissue_dir = os.path.join(dataset_dir, f"Tissue#{id}")
         annotator_name_dirs =[os.path.join(tissue_dir, x) for x in os.listdir(tissue_dir)]
 
         # Check if tissue directory exists
