@@ -175,20 +175,24 @@ if __name__ == "__main__":
     )
 
     dataset = DvrkLerobotDataset(
-        repo_id="surpass/cholecystectomy_debug",
+        repo_id="surpass/cholecystectomy_w_affordances",
         tissue_sample_ids=[
             "Tissue#1", "Tissue#2", "Tissue#3", "Tissue#4", "Tissue#5",
             "Tissue#6", "Tissue#7", "Tissue#8", "Tissue#9", "Tissue#10", "Tissue#11",
+            "Tissue#12", "Tissue#13", "Tissue#14", "Tissue#15", "Tissue#16"
         ],
         phases=phases,
         history_chunk_size=0,
         future_chunk_size=100,
     )
 
+    import random
+
     # visualize annotated data
-    num_samples = 1000
+    num_samples = 100
     for i in range(num_samples):
-        sample = dataset[i]
+        sample_idx = random.randint(0, len(dataset))
+        sample = dataset[sample_idx]
         data = utils.collect_data(sample, device=torch.device("cpu"))
 
         endo_img = data["endoscope_img"]

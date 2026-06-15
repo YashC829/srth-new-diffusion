@@ -79,3 +79,5 @@ typing-inspection
 wcwidth
 # lerobot==0.4.4
 zmq
+PySide6
+ultralytics

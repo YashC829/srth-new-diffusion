@@ -3,6 +3,9 @@ import json
 import os
 from pathlib import Path
 
+RAW_DATASET_ROOT=Path("/mnt/sda1/surpass_data/Cholecystectomy")
+
+# depth constants
 DEPTH_MIN = 0.0
 DEPTH_MAX = 0.3
 
@@ -243,7 +246,6 @@ QUAT_CP_PSM2 = ["psm2_pose.orientation.x", "psm2_pose.orientation.y", "psm2_pose
 JAW_MAX_ANGLE_RAD = 1.3
 JAW_MIN_ANGLE_RAD = -.36
 
-
 # dataset statistics caching
 spec = importlib.util.find_spec("srth_new")
 PACKAGE_ROOT = Path(spec.origin).resolve().parent.parent.parent
@@ -253,3 +255,19 @@ os.makedirs(DATASET_STATS_CACHE_DIR, exist_ok=True)
 if not os.path.exists(DATASET_STATS_CACHE_FILE):
     with open(DATASET_STATS_CACHE_FILE, "w") as file:
         json.dump({}, file)
+
+# annotation pipeline constants
+ANNOTATION_DATA_ROOT_DIR = Path(__file__).parent.parent.parent.parent / "annotations"
+RAW_ANNOTATION_OUTPUT_DIR = ANNOTATION_DATA_ROOT_DIR / "raw_annotations"
+COTRACKER_CHECKPOINT_DIR=Path(__file__).parent / "third_party/co-tracker/checkpoints"
+PROPAGATED_POINTS_DICT_KEY="propagated_points_file_path"
+ANNOTATIONS_SUBDIR_NAME="annotations"
+
+VERIFIED_ANNOTATION_OUTPUT_DIR=ANNOTATION_DATA_ROOT_DIR / "verified_annotations"
+VERIFICATION_VIDEO_SUBDIR="verification_vids"
+VERIFICATION_ANNOTATION_JSON_SUBDIR="verification_annotations"
+FINAL_VERIFIED_ANNOTATION_SUBDIR="verified_annotations"
+
+# yolo kp constants
+AFFORDANCE_KP_CLS = 0
+TOOL_KP_CLS = 1

@@ -150,3 +150,50 @@ python src/srth-new/low_level_policy/run_inference.py \
 ```
 
 This should bring up the GUI for inference if everything is setup correctly. If anything is not working properly, you can call me.
+
+## Installing CoTracker
+
+Assuming you have cloned the submodules, run the following to install [CoTracker](https://github.com/facebookresearch/co-tracker.git) and download the checkpoints:
+
+```bash
+cd src/srth-new/annotation
+chmod +x install_cotracker.sh
+./install_cotracker.sh
+```
+
+## Annotation Pipeline
+
+Currently, we only have two annotations:
+
+1. Tool tip keypoint
+2. Affordance keypoint
+
+Ask Grayson how each of these should be annotated for each phase.
+
+### Manually Labelling Annotations
+
+To run the GUI for manually labelling keypoint annotations, run the below. This will allow you to select which phases you wish to annotate. Click on the file path you wish to annotate in the list on the left. Then, to annotate, you should use the slider to move until the tool is just touching the tissue. The idea is to move it to the frame before which the tissue is not moved or manipulated at all. That way, we know the points will be valid before that frame as the tissue won't move and CoTracker is very accurate in this situation. After this point, we cannot be confident that the affordance keypoint will move properly with the manipulated tissue, but this is okay as we can handle this during later post processing. Next, your first click will place the `affordance` keypoint annotation and the second click will place the `tool` keypoint annotation. Once you do that, the GUI will automatically go to the next episode to annotate. You can undo an annotation with the button at the bottom of the GUI.
+
+```bash
+python src/srth_new/annotation/affordance_keypoint_annotator.py
+```
+
+This will allow you to select which phases you wish to annotate. Click on the file path you wish to annotate in the list on the left. Then, to annotate, you should use the slider to move until the tool is just touching the tissue. The idea is to move it to the frame before which the tissue is not moved or manipulated at all. That way, we know the points will be valid before that frame as the tissue won't move and CoTracker is very accurate in this situation. After this point, we cannot be confident that the affordance keypoint will move properly with the manipulated tissue, but this is okay as we can handle this during later post processing.
+
+After you have manually created some annotations, you must propagate those keypoints across the video using CoTracker. This can be done by running the following:
+
+```bash
+python src/srth_new/annotation/propagate_points.py
+```
+
+Finally, you will need to verify the annotations to make sure CoTracker is working properly. To verify the annotations, run the following:
+
+```bash
+python src/srth_new/annotation/verify_annotations.py
+```
+
+This will pull up a GUI where you can view the propagated points. If everything looks good, that annotation will be accepted and saved by click the `Accept` button at the bottom of the GUI.
+
+### Where are the annotations saved?
+
+Raw annotations from the manual GUI are saved as `.json` files in `annotations/raw_annotations/annotations`. When you propagate keypoints, those keypoints are saved in a `torch.tensor` file named the same as the raw annotation `.json` file but with a `.pt` extension in the same `annotations/raw_annotations/annotations` directory. After verifying the annotations, the `.json` and `.pt` files will be moved over to the `annotations/verified_annotations/verified_annotations` directory where they can be used to create a LeRobot dataset or train a keypoint detection Yolo model.

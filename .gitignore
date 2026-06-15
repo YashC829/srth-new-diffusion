@@ -2,6 +2,7 @@
 wandb
 outputs
 multirun
+annotations
 
 # caches
 .dataset_stats_cache
@@ -14,6 +15,7 @@ __pycache__/
 .pytest_cache/
 *.pyc
 *.egg-info
+*.pt
 
 # catkin_ws build directories
 .catkin_tools
@@ -29,6 +31,7 @@ saved_runs
 
 checkpoints
 
+keypoint_affordance_dataset
 temp.py
 debug_imgs
-surpass_verified_annotations
+runs

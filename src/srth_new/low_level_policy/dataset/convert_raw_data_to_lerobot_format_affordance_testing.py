@@ -21,6 +21,7 @@ from tqdm import tqdm
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from srth_new.general import constants
 from srth_new.general.utils import dataset
+from srth_new.general import constants
 
 import contextlib
 
@@ -726,7 +727,7 @@ def convert_one_episode(ep_dir, affordance_dict, lerobot_dataset, args, use_prep
 def load_affordance_dicts():
     from glob import glob
 
-    verified_affordances_path = "/home/grayson/surpass/srth-new/surpass_verified_annotations/verified_annotations"
+    verified_affordances_path = constants.FINAL_VERIFIED_ANNOTATION_SUBDIR
     affordance_dict_paths = glob(os.path.join(verified_affordances_path, "*.json"))
 
     affordance_dict_list = list()
