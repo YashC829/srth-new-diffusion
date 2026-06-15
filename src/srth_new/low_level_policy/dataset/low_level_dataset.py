@@ -90,6 +90,8 @@ class DvrkLerobotDataset(torch.utils.data.Dataset):
 
         self.dataset = FilteredLeRobotDataset(ds_lerobot, filtered_indices)
 
+        self.endo_img_shape = None
+
     def __len__(self):
         return len(self.dataset)
 
@@ -108,8 +110,17 @@ class DvrkLerobotDataset(torch.utils.data.Dataset):
         action_is_pad = sample["action_is_pad"][self.history_chunk_size:]
         command_text = sample["task"]
 
+        if self.endo_img_shape is None:
+            self.endo_img_shape = endoscope_img.shape
+
         tool_kp = sample["tool_kp"] if "tool_kp" in sample else None
         affordance_kp = sample["affordance_kp"] if "affordance_kp" in sample else None 
+
+        # normalize the keypoints based on image size
+        tool_kp[0] = tool_kp[0] / self.endo_img_shape[2]
+        tool_kp[1] = tool_kp[1] / self.endo_img_shape[1]
+        affordance_kp[0] = affordance_kp[0] / self.endo_img_shape[2]
+        affordance_kp[1] = affordance_kp[1] / self.endo_img_shape[1]
 
         # handle the action history
         if self.history_chunk_size > 0:

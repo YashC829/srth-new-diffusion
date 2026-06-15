@@ -6,6 +6,8 @@ import numpy as np
 import torch
 from torch import nn
 
+from srth_new.general import constants
+
 def reparametrize(mu, logvar):
     std = logvar.div(2).exp()
     eps = Variable(std.data.new(std.size()).normal_())
@@ -182,6 +184,7 @@ class DETRVAE(nn.Module):
         history_num_heads=8,
         use_language=False,
         use_film=False,
+        use_keypoints=False
     ):
         super().__init__()
 
@@ -243,11 +246,23 @@ class DETRVAE(nn.Module):
 
         self.latent_out_proj = nn.Linear(self.latent_dim, hidden_dim)
 
+        self.use_keypoints = use_keypoints
+        if self.use_keypoints:
+            self.keypoint_xy_proj = nn.Sequential(
+                nn.Linear(2, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+            )
+        self.keypoint_class_embed = nn.Embedding(constants.NUM_KP_CLASSES, hidden_dim)
+
         pos_embed_dim = 2
         if self.use_language:
             pos_embed_dim += 1
         if self.use_history:
             pos_embed_dim += history_num_tokens
+        if self.use_keypoints:
+            pos_embed_dim += constants.NUM_KP_CLASSES
+
         self.additional_pos_embed = nn.Embedding(pos_embed_dim, hidden_dim)
 
         if self.use_history:
@@ -326,6 +341,18 @@ class DETRVAE(nn.Module):
         )
 
         return encoded[:, : self.history_num_tokens]
+    
+    def _encode_keypoints(self, keypoints: torch.Tensor):
+        # keypoints: [B, num_classes, 2]
+        if keypoints.shape[1:] != (constants.NUM_KP_CLASSES, 2):
+            raise Exception(f"Keypoints expected to be the following shape [B, "
+                            "{constants.NUM_KP_CLASSES}, 2] instead got {keypoints.shape}")
+        if keypoints.max() > 1.0 or keypoints.min() < 0.0:
+            raise Exception(f"Keypoints must be normalized between 0 and 1.")
+        kp_tokens = self.keypoint_xy_proj(keypoints)                  # [B, C, H]
+        class_ids = torch.arange(keypoints.shape[1], device=keypoints.device)
+        kp_tokens = kp_tokens + self.keypoint_class_embed(class_ids)[None, :, :]
+        return kp_tokens
 
     def forward(
         self,
@@ -338,6 +365,7 @@ class DETRVAE(nn.Module):
         depth_image=None,
         history=None,
         history_is_pad=None,
+        keypoints=None
     ):
         """Forward pass.
 
@@ -481,6 +509,17 @@ class DETRVAE(nn.Module):
 
             if history_tokens is not None:
                 extra_conditioning_tokens.append(history_tokens)
+
+            if not self.use_keypoints and keypoints is not None:
+                raise Exception(f"The model has use_keypoints set to false, "
+                                "but keypoints were passed to the forward function.")
+
+            if self.use_keypoints:
+                if keypoints is None:
+                    raise Exception(f"The model has use_keypoints set to true, "
+                                    "but no keypoints passed to forward function.")
+                kp_tokens = self._encode_keypoints(keypoints)
+                extra_conditioning_tokens.append(kp_tokens)
 
             command_embedding_to_append = None
             if len(extra_conditioning_tokens) > 0:

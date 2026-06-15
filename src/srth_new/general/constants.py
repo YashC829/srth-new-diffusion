@@ -248,7 +248,7 @@ JAW_MIN_ANGLE_RAD = -.36
 
 # dataset statistics caching
 spec = importlib.util.find_spec("srth_new")
-PACKAGE_ROOT = Path(spec.origin).resolve().parent.parent.parent
+PACKAGE_ROOT = Path(spec.origin).resolve().parent.parent.parent # type:ignore
 DATASET_STATS_CACHE_DIR = PACKAGE_ROOT.joinpath(".dataset_stats_cache")
 DATASET_STATS_CACHE_FILE = DATASET_STATS_CACHE_DIR.joinpath("dataset_stats.json")
 os.makedirs(DATASET_STATS_CACHE_DIR, exist_ok=True)
@@ -269,5 +269,6 @@ VERIFICATION_ANNOTATION_JSON_SUBDIR="verification_annotations"
 FINAL_VERIFIED_ANNOTATION_SUBDIR="verified_annotations"
 
 # yolo kp constants
+NUM_KP_CLASSES = 2
 AFFORDANCE_KP_CLS = 0
 TOOL_KP_CLS = 1

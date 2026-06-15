@@ -518,6 +518,8 @@ def collect_data(data, device: torch.device):
     endoscope_img = endoscope_img.to(device)
     lw_img = lw_img.to(device)
     rw_img = rw_img.to(device)
+    affordance_kp = affordance_kp.to(device)
+    tool_kp = tool_kp.to(device)
     return {
         "endoscope_img": endoscope_img,
         "lw_img": lw_img,

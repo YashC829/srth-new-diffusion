@@ -2,13 +2,14 @@ import logging
 from typing import List, Literal, Optional
 
 from collections import deque
+from copy import deepcopy
 import torch
-import numpy as np
 from matplotlib import colormaps as cm
-from PIL import Image
+from ultralytics import YOLO
 from omegaconf import DictConfig, OmegaConf
 from torch.nn import functional as F
 from torchvision import transforms
+from ultralytics.data.augment import LetterBox
 
 from srth_new.general import constants
 from srth_new.general.third_party.EndoSynth.endosynth.models import (
@@ -82,7 +83,7 @@ def kl_divergence(mu, logvar):
     return total_kld, dimension_wise_kld, mean_kld
 
 
-class ACTPolicy(DVRKPolicy):
+class ACTKPPolicy(DVRKPolicy):
     """ACT policy wrapper with optional depth and action-history conditioning.
 
     This class layers project-specific behavior around the DETR/ACT backbone:
@@ -128,7 +129,11 @@ class ACTPolicy(DVRKPolicy):
         encoder_cfg: DictConfig,
         img_aug_cfg: DictConfig,
         use_depth: bool,
-        use_wrist_cams: bool
+        use_wrist_cams: bool,
+
+        # these args are specific to using keypoints for conditioning
+        kp_predictor_ckpt: str,
+        use_kp_pred_model_during_training: bool
     ):
         """Initialize the policy, optimizer, and optional conditioning modules."""
         super().__init__(
@@ -195,6 +200,7 @@ class ACTPolicy(DVRKPolicy):
             history_num_heads=history_num_heads,
             use_language=use_language,
             use_film="film" in img_backbone_cfg.backbone_type,
+            use_keypoints=True
         )
 
         self.optimizer = torch.optim.AdamW(
@@ -221,6 +227,12 @@ class ACTPolicy(DVRKPolicy):
 
         log.info(f"KL Weight {self.kl_weight}")
         self.num_queries = self.model.num_queries  # type: ignore
+
+        # we have to store the YOLO model in this way. if we don't, calling
+        # ACTKPPolicy.train() will error out because it automatically attempts
+        # to call self.kp_model.train(True), which is not compatible
+        object.__setattr__(self, "kp_model", YOLO(kp_predictor_ckpt))
+        self.use_kp_pred_model_during_training = use_kp_pred_model_during_training
 
     def _build_img_aug_dict(self, cfg: DictConfig):
         aug_dict = {}
@@ -506,6 +518,24 @@ class ACTPolicy(DVRKPolicy):
         #     depth_processed = depth_processed / self.MAX_DEPTH_VAL
 
         return endo_processed, depth_processed, lw_processed, rw_processed
+    
+    def predict_keypoints(self, img: torch.Tensor):
+        if img.dtype != torch.float32:
+            raise Exception(
+                "The YOLO kp prediction model expects the batched tensor to be normalized [0.0, 1.0]"
+            )
+
+        letterbox = LetterBox(new_shape=(640, 640), stride=32, auto=False)
+
+        processed = []
+        for im in img:  # im: [3, H, W]
+            im_np = im.permute(1, 2, 0).detach().cpu().numpy()  # HWC
+            im_lb = letterbox(image=im_np)
+            processed.append(torch.from_numpy(im_lb).permute(2, 0, 1))
+
+        img_640 = torch.stack(processed).to(img.device, dtype=img.dtype)
+        results = self.kp_model(img_640)
+        return results
 
     def forward(
         self,
@@ -520,6 +550,8 @@ class ACTPolicy(DVRKPolicy):
         action_history_is_pad: Optional[torch.Tensor] = None,
         return_policy_actions: bool = False,
         max_inference_chunk_size: int = 100000,
+        affordance_kp: Optional[str] = None,
+        tool_kp: Optional[str] = None,
         **kwargs
     ):
         """Run the policy in training or inference mode.
@@ -554,6 +586,7 @@ class ACTPolicy(DVRKPolicy):
             either a tensor of predicted policy actions or a tensor of absolute
             robot actions.
         """
+        endoscope_img_orig = deepcopy(endoscope_img)
         endoscope_img, depth_img, lw_img_, rw_img_ = self.preprocess_images(
             endoscope_img,
             lw_img,
@@ -611,6 +644,13 @@ class ACTPolicy(DVRKPolicy):
                 processed_history = processed_history.to(rgb_img_stack.device)
                 action_history_is_pad = action_history_is_pad.to(rgb_img_stack.device)
 
+            if self.use_kp_pred_model_during_training:
+                raise NotImplementedError()
+                kp_results = self.predict_keypoints(endoscope_img_orig / 255.0)
+                processed_keypoints = None
+            else:
+                processed_keypoints = torch.stack((affordance_kp, tool_kp), dim=1)
+            
             a_hat, is_pad_hat, (mu, logvar) = self.model(
                 qpos=model_qpos,
                 image_stack=rgb_img_stack,
@@ -621,6 +661,7 @@ class ACTPolicy(DVRKPolicy):
                 depth_image=depth_img,
                 history=processed_history,
                 history_is_pad=action_history_is_pad,
+                keypoints=processed_keypoints
             )
 
             total_kld, dim_wise_kld, mean_kld = kl_divergence(mu, logvar)
@@ -641,6 +682,8 @@ class ACTPolicy(DVRKPolicy):
         if self.use_history:
             action_history = torch.stack(list(self.action_history_buffer), dim=0).unsqueeze(0)
             action_history_is_pad = torch.stack(list(self.action_history_is_pad_buffer), dim=0).unsqueeze(0)
+
+        kp_results = self.predict_keypoints(endoscope_img_orig / 255.0)
 
         a_hat, _, (_, _) = self.model(
             qpos=model_qpos,
