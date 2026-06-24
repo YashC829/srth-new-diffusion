@@ -4,6 +4,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET_PATH="${SCRIPT_DIR}/../general/third_party/cotracker"
 
 cd $TARGET_PATH
+git clone https://github.com/facebookresearch/co-tracker.git
+cd co-tracker
 pip install -e .
 
 mkdir -p checkpoints
