@@ -272,3 +272,7 @@ FINAL_VERIFIED_ANNOTATION_SUBDIR="verified_annotations"
 NUM_KP_CLASSES = 2
 AFFORDANCE_KP_CLS = 0
 TOOL_KP_CLS = 1
+
+# lerobot dataset metadata dict keys
+LEROBOT_DATASET_PHASE_COUNTS_KEY_NAME = "phase_counts_per_tissue"
+LEROBOT_DATASET_TOTAL_EPISODES_KEY_NAME = "total_episodes"

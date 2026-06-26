@@ -35,3 +35,5 @@ keypoint_affordance_dataset
 temp.py
 debug_imgs
 runs
+
+src/srth_new/general/third_party/co-tracker/

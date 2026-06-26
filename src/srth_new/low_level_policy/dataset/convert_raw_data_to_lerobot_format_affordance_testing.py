@@ -1,5 +1,4 @@
 import argparse
-import csv
 import json
 import os
 import re
@@ -727,7 +726,7 @@ def convert_one_episode(ep_dir, affordance_dict, lerobot_dataset, args, use_prep
 def load_affordance_dicts():
     from glob import glob
 
-    verified_affordances_path = constants.FINAL_VERIFIED_ANNOTATION_SUBDIR
+    verified_affordances_path = constants.VERIFIED_ANNOTATION_OUTPUT_DIR / constants.FINAL_VERIFIED_ANNOTATION_SUBDIR
     affordance_dict_paths = glob(os.path.join(verified_affordances_path, "*.json"))
 
     affordance_dict_list = list()
@@ -738,6 +737,24 @@ def load_affordance_dicts():
 
     return affordance_dict_list
 
+def add_phase_count(ep_dir: Path, phase_count: Dict):
+    low_level_phase = dataset.get_low_level_phase_from_ep_dir(str(ep_dir))
+    high_level_phase = dataset.get_high_level_phase_from_ep_dir(str(ep_dir))
+    tissue_name = dataset.get_tissue_name_from_ep_dir(str(ep_dir))
+
+    total_episodes_key_name = constants.LEROBOT_DATASET_TOTAL_EPISODES_KEY_NAME
+
+    if tissue_name not in phase_count:
+        phase_count[tissue_name] = dict()
+        phase_count[tissue_name][total_episodes_key_name] = 0
+    if high_level_phase not in phase_count[tissue_name]:
+        phase_count[tissue_name][high_level_phase] = dict()
+    if low_level_phase not in phase_count[tissue_name][high_level_phase]:
+        phase_count[tissue_name][high_level_phase][low_level_phase] = 0
+    phase_count[tissue_name][total_episodes_key_name] += 1
+    phase_count[tissue_name][high_level_phase][low_level_phase] += 1
+
+    return phase_count
 
 def main():
 
@@ -759,11 +776,17 @@ def main():
 
     count = 0
 
+    phase_counts = dict()
+
     for affordance_dict in tqdm(affordance_dict_list, desc="Converting episodes"):
-        count += 1
+
         ep_dir = Path(affordance_dict["image_path"]).parent.parent
 
         for attempt in range(1, args.max_retries + 1):
+
+            if count >= 20:
+                break
+
             episode_index = lerobot_dataset.meta.total_episodes
 
             try:
@@ -779,6 +802,8 @@ def main():
                         use_preplace=use_preplace,
                     )
 
+                phase_counts = add_phase_count(ep_dir, phase_counts)
+                count += 1
                 break
 
             except Exception as e:
@@ -814,6 +839,20 @@ def main():
 
     if hasattr(lerobot_dataset, "finalize"):
         lerobot_dataset.finalize()
+
+    # add the tissue and phase type information to the dataset metadata...
+    meta_path = Path(lerobot_dataset.root) / "meta" / "info.json"
+
+    with open(meta_path) as f:
+        info = json.load(f)
+
+    info[constants.LEROBOT_DATASET_PHASE_COUNTS_KEY_NAME] = {
+        tissue: dict(phases)
+        for tissue, phases in phase_counts.items()
+    }
+
+    with open(meta_path, "w") as f:
+        json.dump(info, f, indent=2)
 
 
 if __name__ == "__main__":

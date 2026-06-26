@@ -3,6 +3,9 @@
 import shutil
 import logging
 from typing import List
+import json
+import warnings
+from pprint import pformat
 
 import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
@@ -27,6 +30,30 @@ def get_low_level_phases_from_phase_cfg(cfg: DictConfig):
     for _, low_level_phase_list in cfg.items():
         low_level_phases.extend(low_level_phase_list)
     return low_level_phases
+
+def create_filtered_phase_counts(orig_phase_counts, tissue_ids, high_level_phases, low_level_phases):
+    """Each SURPASS LeRobot dataset, given that it is new enough, saves an info
+    dict that provides a count of each episode for a given tissue id and low level
+    phase. These datasets are then filtered based on the training configuration.
+    This function takes the base info dict from the base dataset and creates an
+    updated phase_count dictionary that is faithful to the filtering in the training
+    configuration. Basically, this provides the phase counts for your dataset
+    AFTER filtering."""
+    filtered_phase_counts = dict()
+    for tissue_id, high_level_dict in orig_phase_counts.items():
+        if tissue_id not in tissue_ids:
+            continue
+        filtered_phase_counts[tissue_id] = dict()
+        filtered_phase_counts[tissue_id][constants.LEROBOT_DATASET_TOTAL_EPISODES_KEY_NAME] = 0
+        for high_level_phase, low_level_dict in high_level_dict.items():
+            if high_level_phase not in high_level_phases:
+                continue
+            filtered_phase_counts[tissue_id][high_level_phase] = dict()
+            filtered_phase_counts[tissue_id][high_level_phase]
+            for low_level_phase, count in low_level_dict.items():
+                filtered_phase_counts[tissue_id][high_level_phase][low_level_phase] = count
+                filtered_phase_counts[tissue_id][constants.LEROBOT_DATASET_TOTAL_EPISODES_KEY_NAME] += count
+    return filtered_phase_counts
 
 
 class FilteredLeRobotDataset(Dataset):
@@ -90,12 +117,40 @@ class DvrkLerobotDataset(torch.utils.data.Dataset):
 
         self.dataset = FilteredLeRobotDataset(ds_lerobot, filtered_indices)
 
+        # attempt to load the phase counts from the metadata json file (some older
+        # surpass datasets will not have this)
+        info_path = ds_lerobot.root / "meta" / "info.json"
+        with open(info_path, "r") as file:
+            dataset_info = json.load(file)
+        if constants.LEROBOT_DATASET_PHASE_COUNTS_KEY_NAME not in dataset_info:
+            warnings.warn(f"The lerobot metadata does not have {constants.LEROBOT_DATASET_PHASE_COUNTS_KEY_NAME} as a dictionary key. This means you are using an old dataset..")
+        else:
+            self.filtered_phase_counts = create_filtered_phase_counts(
+                dataset_info[constants.LEROBOT_DATASET_PHASE_COUNTS_KEY_NAME],
+                tissue_sample_ids,
+                high_level_phases,
+                low_level_phases
+            )
+
+            filtered_df = df.loc[mask]
+            num_filtered_episodes = filtered_df["episode_index"].nunique()
+
+            num_eps_from_phase_count_dict = 0
+            for tissue_id, high_level_phase_dict in self.filtered_phase_counts.items():
+                num_eps_from_phase_count_dict += self.filtered_phase_counts[tissue_id][constants.LEROBOT_DATASET_TOTAL_EPISODES_KEY_NAME]
+
+            if num_filtered_episodes != num_eps_from_phase_count_dict:
+                raise Exception(f"There is an error in your filtered phase count function!")
+
+            log.info(f"Phase counts:\n{pformat(self.filtered_phase_counts)}")
+
         self.endo_img_shape = None
 
     def __len__(self):
         return len(self.dataset)
 
     def __getitem__(self, index):
+
         sample = self.dataset[index]
 
         def convert(img):
@@ -186,7 +241,7 @@ if __name__ == "__main__":
     )
 
     dataset = DvrkLerobotDataset(
-        repo_id="surpass/cholecystectomy_w_affordances",
+        repo_id="surpass/cholecystectomy_post_fix_debug",
         tissue_sample_ids=[
             "Tissue#1", "Tissue#2", "Tissue#3", "Tissue#4", "Tissue#5",
             "Tissue#6", "Tissue#7", "Tissue#8", "Tissue#9", "Tissue#10", "Tissue#11",
