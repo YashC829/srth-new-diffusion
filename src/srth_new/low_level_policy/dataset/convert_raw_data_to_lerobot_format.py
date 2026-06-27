@@ -565,6 +565,25 @@ def convert_one_episode(ep_dir, lerobot_dataset, args, use_preplace):
 
     lerobot_dataset.save_episode()
 
+def add_phase_count(ep_dir: Path, phase_count: Dict):
+    low_level_phase = dataset.get_low_level_phase_from_ep_dir(str(ep_dir))
+    high_level_phase = dataset.get_high_level_phase_from_ep_dir(str(ep_dir))
+    tissue_name = dataset.get_tissue_name_from_ep_dir(str(ep_dir))
+
+    total_episodes_key_name = constants.LEROBOT_DATASET_TOTAL_EPISODES_KEY_NAME
+
+    if tissue_name not in phase_count:
+        phase_count[tissue_name] = dict()
+        phase_count[tissue_name][total_episodes_key_name] = 0
+    if high_level_phase not in phase_count[tissue_name]:
+        phase_count[tissue_name][high_level_phase] = dict()
+    if low_level_phase not in phase_count[tissue_name][high_level_phase]:
+        phase_count[tissue_name][high_level_phase][low_level_phase] = 0
+    phase_count[tissue_name][total_episodes_key_name] += 1
+    phase_count[tissue_name][high_level_phase][low_level_phase] += 1
+
+    return phase_count
+
 
 def main():
     args = parse_args()

@@ -51,6 +51,8 @@ def create_filtered_phase_counts(orig_phase_counts, tissue_ids, high_level_phase
             filtered_phase_counts[tissue_id][high_level_phase] = dict()
             filtered_phase_counts[tissue_id][high_level_phase]
             for low_level_phase, count in low_level_dict.items():
+                if low_level_phase not in low_level_phases:
+                    continue
                 filtered_phase_counts[tissue_id][high_level_phase][low_level_phase] = count
                 filtered_phase_counts[tissue_id][constants.LEROBOT_DATASET_TOTAL_EPISODES_KEY_NAME] += count
     return filtered_phase_counts
@@ -241,7 +243,7 @@ if __name__ == "__main__":
     )
 
     dataset = DvrkLerobotDataset(
-        repo_id="surpass/cholecystectomy_post_fix_debug",
+        repo_id="surpass/cholecystectomy_debug",
         tissue_sample_ids=[
             "Tissue#1", "Tissue#2", "Tissue#3", "Tissue#4", "Tissue#5",
             "Tissue#6", "Tissue#7", "Tissue#8", "Tissue#9", "Tissue#10", "Tissue#11",

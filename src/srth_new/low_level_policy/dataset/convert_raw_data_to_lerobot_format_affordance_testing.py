@@ -784,9 +784,6 @@ def main():
 
         for attempt in range(1, args.max_retries + 1):
 
-            if count >= 20:
-                break
-
             episode_index = lerobot_dataset.meta.total_episodes
 
             try:
