@@ -156,6 +156,18 @@ def parse_ts_from_img_file_name(name: str) -> np.int64:
     parts = name[:-4].split("_")
     return np.int64(int(parts[-2]) * 1_000_000_000 + int(parts[-1]))
 
+def parse_frame_id_from_img_file_name(name: str) -> int:
+    if not name.endswith(".jpg"):
+        raise ValueError(f"Expected .jpg image, got: {name}")
+    
+    if name[:5] != "frame":
+        raise Exception(f"Expected image name to begin with `frame`")
+    
+    # you should be able to resolve the frame id from the filename
+    frame_id = int(name[5:11])
+
+    return frame_id
+
 
 def get_img_ts_np(img_dir: Path) -> Tuple[np.ndarray, np.ndarray]:
     file_names = np.array([f for f in os.listdir(img_dir) if f.endswith(".jpg")])
@@ -163,13 +175,19 @@ def get_img_ts_np(img_dir: Path) -> Tuple[np.ndarray, np.ndarray]:
     if len(file_names) == 0:
         raise RuntimeError(f"No .jpg images found in: {img_dir}")
 
+    frame_id_unsorted = np.fromiter(
+        (parse_frame_id_from_img_file_name(f) for f in file_names),
+        dtype=np.int64,
+        count=len(file_names),
+    )
+
     ts_unsorted = np.fromiter(
         (parse_ts_from_img_file_name(f) for f in file_names),
         dtype=np.int64,
         count=len(file_names),
     )
 
-    sort_idx = np.argsort(ts_unsorted, kind="stable")
+    sort_idx = np.argsort(frame_id_unsorted, kind="stable")
 
     return (
         ts_unsorted[sort_idx],
@@ -242,9 +260,14 @@ def sync_via_ts(ep_dir: Path):
         right_wrist_ts,
         kinematics_ts,
     ]
-
-    if not all(is_sorted_ascending(arr) for arr in arrays):
-        raise RuntimeError(f"One or more timestamp arrays are not sorted: {ep_dir}")
+    arr_types = ["left_endo", "right_endo", "left_wrist", "right_wrist", "kinematics"]
+    not_sorted_arrays = list()
+    for idx, arr in enumerate(arrays):
+        if not is_sorted_ascending(arr):
+            not_sorted_arrays.append(idx)
+    
+    if len(not_sorted_arrays) != 0:
+        raise RuntimeError(f"One or more timestamp arrays are not sorted from these arrays: {[arr_types[i] for i in not_sorted_arrays]}")
 
     max_diff_ns = int(1e9 / constants.FPS)
     left_endo_idx = np.arange(len(left_endo_ts), dtype=np.int64)
@@ -259,7 +282,11 @@ def sync_via_ts(ep_dir: Path):
         ]
     )
 
+    # filters out rows with missing matches (one or more data type was beyond the
+    # temporal matching threshold)
     index_map = index_map[np.all(index_map[:, 1:] != -1, axis=1)]
+
+    filtered_left_endo_idx = index_map[:, 0]
 
     if len(index_map) == 0:
         raise RuntimeError(f"No synced frames found for episode: {ep_dir}")
@@ -270,6 +297,7 @@ def sync_via_ts(ep_dir: Path):
         kinematics_df.iloc[index_map[:, 2]].reset_index(drop=True),
         left_wrist_paths[index_map[:, 3]],
         right_wrist_paths[index_map[:, 4]],
+        filtered_left_endo_idx
     )
 
 

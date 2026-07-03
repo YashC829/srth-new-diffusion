@@ -3,6 +3,7 @@ from pathlib import Path
 import os
 from tqdm import tqdm
 from omegaconf import OmegaConf
+from glob import glob
 
 from srth_new.general.utils import dataset
 
@@ -36,7 +37,8 @@ def repair_csv(input_path, output_path):
 
 
 dataset_dir = "/mnt/sda1/surpass_data/Cholecystectomy"
-tissue_ids = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+tissue_ids = list(range(1, len(glob(os.path.join(dataset_dir, "*")))+1))
+tissue_ids = [24]
 phases = OmegaConf.create(
     {
         "unzipping": [

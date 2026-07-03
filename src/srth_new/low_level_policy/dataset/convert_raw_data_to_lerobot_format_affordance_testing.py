@@ -6,11 +6,12 @@ import shutil
 import types
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import random
 from typing import Tuple
 import torch
 import traceback
 
-from typing import Dict
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -105,6 +106,11 @@ TEST_AFFORDANCE_CHOLECYSTECTOMY_FEATURES={
         "shape": (1,),
         "names": None,
     },
+    "has_affordance": {
+        "dtype": "bool",
+        "shape": (1,),
+        "names": None,
+    }
 }
 
 @contextlib.contextmanager
@@ -584,7 +590,8 @@ def iter_lerobot_frames_from_ep(
 
     esu_signal = kinematics[constants.HEADER_NAME_ESU_SIGNAL].to_numpy()
 
-    keypoints_tensor = load_tensor(affordance_dict["propagated_points_file_path"]).cpu().numpy()[0]
+    if affordance_dict is not None:
+        keypoints_tensor = load_tensor(affordance_dict["propagated_points_file_path"]).cpu().numpy()[0]
     
     camera_paths = {
         "images.endoscope.left": left_endo_files,
@@ -631,17 +638,31 @@ def iter_lerobot_frames_from_ep(
             # left endoscope image. See sync_via_ts function to see how this
             # temporal filtering is conducted
             kp_frame_idx = filtered_left_endo_idx[frame_idx]
-
-            yield {
-                "affordance_kp": keypoints_tensor[kp_frame_idx][0],
-                "tool_kp": keypoints_tensor[kp_frame_idx][1],
-                "state": states[frame_idx],
-                "action": actions[frame_idx],
-                "esu_signal": str(esu_signal[frame_idx]),
-                "original_ep_dir": str(ep_dir),
-                **static_metadata,
-                **dummy_images,
-            }
+            
+            if affordance_dict is not None:
+                yield {
+                    "affordance_kp": keypoints_tensor[kp_frame_idx][0],
+                    "tool_kp": keypoints_tensor[kp_frame_idx][1],
+                    "state": states[frame_idx],
+                    "action": actions[frame_idx],
+                    "esu_signal": str(esu_signal[frame_idx]),
+                    "original_ep_dir": str(ep_dir),
+                    "has_affordance": np.array([True]),
+                    **static_metadata,
+                    **dummy_images,
+                }
+            else:
+                yield {
+                    "affordance_kp": constants.EMPTY_KP,
+                    "tool_kp": constants.EMPTY_KP,
+                    "state": states[frame_idx],
+                    "action": actions[frame_idx],
+                    "esu_signal": str(esu_signal[frame_idx]),
+                    "original_ep_dir": str(ep_dir),
+                    "has_affordance": np.array([False]),
+                    **static_metadata,
+                    **dummy_images,
+                } 
 
     else:
         image_path_groups = zip(
@@ -668,16 +689,30 @@ def iter_lerobot_frames_from_ep(
                 # temporal filtering is conducted
                 kp_frame_idx = filtered_left_endo_idx[frame_idx]
 
-                yield {
-                    "affordance_kp": keypoints_tensor[kp_frame_idx][0],
-                    "tool_kp": keypoints_tensor[kp_frame_idx][1],
-                    "state": states[frame_idx],
-                    "action": actions[frame_idx],
-                    "esu_signal": str(esu_signal[frame_idx]),
-                    "original_ep_dir": str(ep_dir),
-                    **static_metadata,
-                    **image_dict,
-                }
+                if affordance_dict is not None:
+                    yield {
+                        "affordance_kp": keypoints_tensor[kp_frame_idx][0],
+                        "tool_kp": keypoints_tensor[kp_frame_idx][1],
+                        "state": states[frame_idx],
+                        "action": actions[frame_idx],
+                        "esu_signal": str(esu_signal[frame_idx]),
+                        "original_ep_dir": str(ep_dir),
+                        "has_affordance": np.array([True]),
+                        **static_metadata,
+                        **image_dict,
+                    }
+                else:
+                    yield {
+                        "affordance_kp": constants.EMPTY_KP,
+                        "tool_kp": constants.EMPTY_KP,
+                        "state": states[frame_idx],
+                        "action": actions[frame_idx],
+                        "esu_signal": str(esu_signal[frame_idx]),
+                        "original_ep_dir": str(ep_dir),
+                        "has_affordance": np.array([False]),
+                        **static_metadata,
+                        **image_dict,
+                    } 
 
 
 def create_lerobot_dataset(args):
@@ -756,14 +791,46 @@ def add_phase_count(ep_dir: Path, phase_count: Dict):
 
     return phase_count
 
+def create_tuples_ep_dir_affordance_dict(
+        ep_dirs: List[str], affordance_dict_list: List[Dict]
+    ) -> List[Tuple[Path, Dict | None]]:
+    
+    # loop through each affordance dict, create tuples, and track
+    # already added episode directories
+    tup_list_ep_dir_affordance_dict = list()
+    ep_dirs_added = set()
+
+    for affordance_dict in affordance_dict_list:
+        ep_dir = Path(affordance_dict["image_path"]).parent.parent
+        ep_dirs_added.add(str(ep_dir))
+        tup_list_ep_dir_affordance_dict.append((ep_dir, affordance_dict))
+
+    for ep_dir in ep_dirs:
+        if ep_dir not in ep_dirs_added:
+            ep_dirs_added.add(ep_dir)
+            tup_list_ep_dir_affordance_dict.append((Path(ep_dir), None))
+
+    return tup_list_ep_dir_affordance_dict
+
 def main():
 
     args = parse_args()
-
     if args.overwrite:
         delete_hf_dataset(args.repo_id)
 
+    # load all of the affordance dictionaries
     affordance_dict_list = load_affordance_dicts()
+
+    # load all of the episode directories
+    ep_dirs, info = dataset.get_all_episode_directories(args.source_dir)
+    print_ep_info(info)
+
+    # we want to loop through and add annotations to data samples when available,
+    # and populate those dataset variables with nothing if not available. thus,
+    # we will need to create a list of tuples containing (ep_dir, affordance_dict | None)
+    # there will be no duplicate ep_dir for any of the tuples in the list
+    tup_list_ep_dir_affordance_dict = create_tuples_ep_dir_affordance_dict(ep_dirs, affordance_dict_list)
+    random.shuffle(tup_list_ep_dir_affordance_dict)
 
     lerobot_dataset = create_lerobot_dataset(args)
 
@@ -778,9 +845,7 @@ def main():
 
     phase_counts = dict()
 
-    for affordance_dict in tqdm(affordance_dict_list, desc="Converting episodes"):
-
-        ep_dir = Path(affordance_dict["image_path"]).parent.parent
+    for ep_dir, affordance_dict in tqdm(tup_list_ep_dir_affordance_dict, desc="Converting episodes"):
 
         for attempt in range(1, args.max_retries + 1):
 

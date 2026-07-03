@@ -133,6 +133,13 @@ def get_all_episode_directories(dataset_dir: str) -> Tuple[List[str], Dict[str, 
                         + len(temp_episode_dirs)
                     )
 
+    total_episodes = 0
+
+    for phase_desc, count in num_episodes_info.items():
+        total_episodes += count
+
+    num_episodes_info["total_episodes"] = total_episodes
+
     # remove phases that do not contain any episodes for brevity
     keys_to_delete = list()
     for phase, val in num_episodes_info.items():

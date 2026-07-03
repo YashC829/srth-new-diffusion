@@ -3,6 +3,8 @@ import json
 import os
 from pathlib import Path
 
+import numpy as np
+
 RAW_DATASET_ROOT=Path("/mnt/sda1/surpass_data/Cholecystectomy")
 
 # depth constants
@@ -272,6 +274,7 @@ FINAL_VERIFIED_ANNOTATION_SUBDIR="verified_annotations"
 NUM_KP_CLASSES = 2
 AFFORDANCE_KP_CLS = 0
 TOOL_KP_CLS = 1
+EMPTY_KP = np.array([np.nan, np.nan], dtype=np.float32)
 
 # lerobot dataset metadata dict keys
 LEROBOT_DATASET_PHASE_COUNTS_KEY_NAME = "phase_counts_per_tissue"

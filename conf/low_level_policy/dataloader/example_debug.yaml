@@ -1,8 +1,7 @@
-repo_id: surpass/cholecystectomy_06_30_26
+repo_id: surpass/cholecystectomy_debug
 
 tissue_sample_ids_train:
   [
-    Tissue#1,
     Tissue#2,
     Tissue#3,
     Tissue#4,
@@ -20,25 +19,10 @@ tissue_sample_ids_train:
     Tissue#16,
     Tissue#17,
     Tissue#18,
-    Tissue#19,
-    Tissue#20,
-    Tissue#21,
-    Tissue#22,
-    Tissue#23,
-    Tissue#24,
-    Tissue#25,
-    Tissue#26,
-    Tissue#27,
-    Tissue#28,
-    # Tissue#29,
-    Tissue#30,
   ]
-tissue_sample_ids_val: [Tissue#29]
+tissue_sample_ids_val: [Tissue#1]
 batch_size: 12 # Batch size for both train and validation dataloaders.
 num_workers: 16 # DataLoader worker processes.
-
-# this will filter out all data that does not contain annotated keypoints
-use_only_kp_annotated_data: False
 
 # inherited parameters
 action_mode: ${..action_mode}
@@ -47,19 +31,19 @@ future_chunk_size: ${ll_future_chunk_size}
 phases:
   unzipping:
     - 1_grabbing_gallbladder_right
-    - 1_grabbing_gallbladder_right_recovery
+    # - 1_grabbing_gallbladder_right_recovery
     - 2_initial_incision
-    - 2_initial_incision_recovery
+    # - 2_initial_incision_recovery
     - 3_hook_to_local_home
     - 4_hook_tissue
-    - 4_hook_tissue_recovery
+    # - 4_hook_tissue_recovery
     - 5_cauterize_tissue_right
     - 6_hook_to_global_home
     - 7_grasper_to_home
     - 8_grabbing_gallbladder_left
-    - 8_grabbing_gallbladder_left_recovery
+    # - 8_grabbing_gallbladder_left_recovery
     - 9_returning_to_initial_incision
-    - 9_returning_to_initial_incision_recovery
+    # - 9_returning_to_initial_incision_recovery
     - 10_cauterize_tissue_left
     - 11_regrab
     - 12_hook_to_global_home

@@ -38,7 +38,7 @@ batch_size: 12 # Batch size for both train and validation dataloaders.
 num_workers: 16 # DataLoader worker processes.
 
 # this will filter out all data that does not contain annotated keypoints
-use_only_kp_annotated_data: False
+use_only_kp_annotated_data: True
 
 # inherited parameters
 action_mode: ${..action_mode}

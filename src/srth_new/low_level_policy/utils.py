@@ -341,7 +341,7 @@ def load_dataset_stats(
     # each episode in the dataset. therefore, we will define a number of randomly
     # sampled trajectories and continue to sample from the data loader until the
     # chosen number of samples are aggregated for the statistics
-    desired_samples = 10000
+    desired_samples = 10
     pbar = tqdm(total=desired_samples, desc="Sampling actions")
 
     while sample_count < desired_samples:
@@ -428,6 +428,7 @@ def load_dataloaders(cfg: DictConfig):
         cfg.repo_id,
         cfg.tissue_sample_ids_train,
         cfg.phases,
+        cfg.use_only_kp_annotated_data,
         cfg.history_chunk_size,
         cfg.future_chunk_size,
     )
@@ -436,6 +437,7 @@ def load_dataloaders(cfg: DictConfig):
         cfg.repo_id,
         cfg.tissue_sample_ids_val,
         cfg.phases,
+        cfg.use_only_kp_annotated_data,
         cfg.history_chunk_size,
         cfg.future_chunk_size,
     )
@@ -513,6 +515,7 @@ def collect_data(data, device: torch.device):
         command_text,
         affordance_kp,
         tool_kp,
+        has_affordance,
         original_ep_dir
     ) = data
     endoscope_img = endoscope_img.to(device)
@@ -532,5 +535,6 @@ def collect_data(data, device: torch.device):
         "command_text": list(command_text),
         "affordance_kp": affordance_kp,
         "tool_kp": tool_kp,
+        "has_affordance": has_affordance,
         "original_ep_dir": original_ep_dir
     }

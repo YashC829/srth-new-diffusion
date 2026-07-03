@@ -80,14 +80,16 @@ class DvrkLerobotDataset(torch.utils.data.Dataset):
         repo_id: str,
         tissue_sample_ids: List[str],
         phases: DictConfig,
+        use_only_kp_annotated_data: bool,
         history_chunk_size: int = 0,
-        future_chunk_size: int = 100,
+        future_chunk_size: int = 100
     ):
 
         super(DvrkLerobotDataset).__init__()
         dataset_utils.validate_selected_phases(phases)
         self.history_chunk_size = history_chunk_size
         self.future_chunk_size = future_chunk_size
+        self.use_only_kp_annotated_data = use_only_kp_annotated_data
 
         self.ds_meta = LeRobotDatasetMetadata(repo_id)
 
@@ -114,6 +116,7 @@ class DvrkLerobotDataset(torch.utils.data.Dataset):
             df["meta.low_level_phase"].isin(low_level_phases)
             & df["meta.high_level_phase"].isin(high_level_phases)
             & df["meta.tissue_id"].isin(tissue_sample_ids)
+            & (df["has_affordance"] == self.use_only_kp_annotated_data)
         )
         filtered_indices = df.index[mask].tolist()
 
@@ -141,7 +144,7 @@ class DvrkLerobotDataset(torch.utils.data.Dataset):
             for tissue_id, high_level_phase_dict in self.filtered_phase_counts.items():
                 num_eps_from_phase_count_dict += self.filtered_phase_counts[tissue_id][constants.LEROBOT_DATASET_TOTAL_EPISODES_KEY_NAME]
 
-            if num_filtered_episodes != num_eps_from_phase_count_dict:
+            if num_filtered_episodes != num_eps_from_phase_count_dict and not self.use_only_kp_annotated_data:
                 raise Exception(f"There is an error in your filtered phase count function!")
 
             log.info(f"Phase counts:\n{pformat(self.filtered_phase_counts)}")
@@ -154,6 +157,10 @@ class DvrkLerobotDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
 
         sample = self.dataset[index]
+
+        if self.use_only_kp_annotated_data:
+            if not sample["has_affordance"]:
+                raise Exception(f"Data sample does not have affordance but use_only_kp_annotated_data set to true.")
 
         def convert(img):
             return (img * 255).to(torch.uint8)
@@ -170,14 +177,18 @@ class DvrkLerobotDataset(torch.utils.data.Dataset):
         if self.endo_img_shape is None:
             self.endo_img_shape = endoscope_img.shape
 
-        tool_kp = sample["tool_kp"] if "tool_kp" in sample else None
-        affordance_kp = sample["affordance_kp"] if "affordance_kp" in sample else None 
+        if sample["has_affordance"]:
+            tool_kp = sample["tool_kp"]
+            affordance_kp = sample["affordance_kp"]
 
-        # normalize the keypoints based on image size
-        tool_kp[0] = tool_kp[0] / self.endo_img_shape[2]
-        tool_kp[1] = tool_kp[1] / self.endo_img_shape[1]
-        affordance_kp[0] = affordance_kp[0] / self.endo_img_shape[2]
-        affordance_kp[1] = affordance_kp[1] / self.endo_img_shape[1]
+            # normalize the keypoints based on image size
+            tool_kp[0] = tool_kp[0] / self.endo_img_shape[2]
+            tool_kp[1] = tool_kp[1] / self.endo_img_shape[1]
+            affordance_kp[0] = affordance_kp[0] / self.endo_img_shape[2]
+            affordance_kp[1] = affordance_kp[1] / self.endo_img_shape[1]
+        else:
+            tool_kp = torch.empty((0, 2), dtype=torch.float32)
+            affordance_kp = torch.empty((0, 2), dtype=torch.float32)
 
         # handle the action history
         if self.history_chunk_size > 0:
@@ -199,6 +210,7 @@ class DvrkLerobotDataset(torch.utils.data.Dataset):
             command_text,
             affordance_kp,
             tool_kp,
+            sample["has_affordance"],
             sample["original_ep_dir"]
         )
 
