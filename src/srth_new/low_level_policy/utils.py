@@ -299,6 +299,7 @@ def load_dataset_stats(
     dataset_dir: str,
     tissue_sample_ids_train: List[int],
     phases: DictConfig,
+    use_only_kp_annotated_data: bool,
     action_mode: str,
 ):
 
@@ -329,7 +330,7 @@ def load_dataset_stats(
     log.info("Computing dataset statistics. This could take a few minutes...")
 
     temp_train_dataset = DvrkLerobotDataset(
-        dataset_dir, tissue_sample_ids_train, phases
+        dataset_dir, tissue_sample_ids_train, phases, use_only_kp_annotated_data
     )
     loader = DataLoader(temp_train_dataset, batch_size=12, shuffle=True)
 
@@ -421,7 +422,7 @@ def load_dataset_stats(
 def load_dataloaders(cfg: DictConfig):
     log.info(f"Loading data from {cfg.repo_id}")
     dataset_stats = load_dataset_stats(
-        cfg.repo_id, cfg.tissue_sample_ids_train, cfg.phases, cfg.action_mode
+        cfg.repo_id, cfg.tissue_sample_ids_train, cfg.phases, cfg.use_only_kp_annotated_data, cfg.action_mode
     )
 
     train_dataset = DvrkLerobotDataset(

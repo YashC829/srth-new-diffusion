@@ -176,6 +176,8 @@ def run_training(
             if training_step >= train_cfg.num_train_steps:
                 break
 
+            exit()
+
         epoch += 1
 
     pbar.close()

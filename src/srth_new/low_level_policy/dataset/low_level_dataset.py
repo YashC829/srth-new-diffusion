@@ -112,12 +112,19 @@ class DvrkLerobotDataset(torch.utils.data.Dataset):
             for x in get_low_level_phases_from_phase_cfg(phases)
         ]
         df = ds_lerobot.hf_dataset.to_pandas()
-        mask = (
-            df["meta.low_level_phase"].isin(low_level_phases)
-            & df["meta.high_level_phase"].isin(high_level_phases)
-            & df["meta.tissue_id"].isin(tissue_sample_ids)
-            & (df["has_affordance"] == self.use_only_kp_annotated_data)
-        )
+        if self.use_only_kp_annotated_data:
+            mask = (
+                df["meta.low_level_phase"].isin(low_level_phases)
+                & df["meta.high_level_phase"].isin(high_level_phases)
+                & df["meta.tissue_id"].isin(tissue_sample_ids)
+                & (df["has_affordance"] == True)
+            )
+        else:
+            mask = (
+                df["meta.low_level_phase"].isin(low_level_phases)
+                & df["meta.high_level_phase"].isin(high_level_phases)
+                & df["meta.tissue_id"].isin(tissue_sample_ids)
+            )
         filtered_indices = df.index[mask].tolist()
 
         self.dataset = FilteredLeRobotDataset(ds_lerobot, filtered_indices)
@@ -187,8 +194,8 @@ class DvrkLerobotDataset(torch.utils.data.Dataset):
             affordance_kp[0] = affordance_kp[0] / self.endo_img_shape[2]
             affordance_kp[1] = affordance_kp[1] / self.endo_img_shape[1]
         else:
-            tool_kp = torch.empty((0, 2), dtype=torch.float32)
-            affordance_kp = torch.empty((0, 2), dtype=torch.float32)
+            tool_kp = torch.tensor([-1.0, -1.0], dtype=torch.float32)
+            affordance_kp = torch.tensor([-1.0, -1.0], dtype=torch.float32)
 
         # handle the action history
         if self.history_chunk_size > 0:
