@@ -341,7 +341,7 @@ def load_dataset_stats(
     # each episode in the dataset. therefore, we will define a number of randomly
     # sampled trajectories and continue to sample from the data loader until the
     # chosen number of samples are aggregated for the statistics
-    desired_samples = 10
+    desired_samples = 10000
     pbar = tqdm(total=desired_samples, desc="Sampling actions")
 
     while sample_count < desired_samples:
