@@ -121,6 +121,7 @@ class ACTKPPolicy(DVRKPolicy):
         kl_weight: float,
         use_language: bool,
         language_encoder: str,
+        merge_recovery_phases: bool,
         action_mode: Literal["hybrid_relative", "ego", "relative_endoscope"],
         norm_scheme: Literal["std", "min_max"],
         img_resize_cfg: DictConfig,
@@ -151,6 +152,7 @@ class ACTKPPolicy(DVRKPolicy):
         self.use_wrist_cams = use_wrist_cams
         self.history_chunk_size = history_chunk_size
         self.use_history = history_chunk_size > 0
+        self.merge_recovery_phases = merge_recovery_phases
 
         # create buffers for storing the prediction history
         self.action_history_buffer = deque(
@@ -324,7 +326,7 @@ class ACTKPPolicy(DVRKPolicy):
         if command_text is None:
             raise ValueError("command_text is required when use_language=True")
 
-        texts = self._normalize_command_text(command_text)
+        texts = self._normalize_command_text(command_text, self.merge_recovery_phases)
 
         if not texts:
             raise ValueError("command_text must contain at least one string")
@@ -350,7 +352,13 @@ class ACTKPPolicy(DVRKPolicy):
         return torch.stack(embeddings, dim=0).to(device)
 
     @staticmethod
-    def _normalize_command_text(command_text) -> list[str]:
+    def _normalize_command_text(command_text, merge_recovery_phases: bool) -> list[str]:
+
+        # remove the "_recovery" suffix if merging recovery phases with their
+        # respective "standard" phases
+        if merge_recovery_phases:
+            command_text = command_text.replace(" recovery", "")
+
         if command_text is None:
             return []
 
@@ -367,7 +375,7 @@ class ACTKPPolicy(DVRKPolicy):
 
     def _record_training_command_text(self, command_text) -> None:
         self.training_text_conditionings.extend(
-            self._normalize_command_text(command_text)
+            self._normalize_command_text(command_text, self.merge_recovery_phases)
         )
 
     def _serialize_policy_config(self) -> dict[str, object]:
