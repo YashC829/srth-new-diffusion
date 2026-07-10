@@ -16,11 +16,11 @@ ll_future_chunk_size: 60
 
 
 train:
-  num_train_steps: 500000
+  num_train_steps: 300000
   num_warmup_steps: 50000
   save_every: 10000            # Save a checkpoint every N training steps.
   keep_every: 50000            # Prune checkpoints so only one representative checkpoint survives per bin.
-  validate_every: 1000         # Run the validation loop every N training steps.
+  validate_every: 10000         # Run the validation loop every N training steps.
   checkpoint_dir: ${hydra:runtime.output_dir}/checkpoints
   resume_checkpoint: null   # Optional checkpoint path to resume model/optimizer/scheduler state from.
   training_hydra_cfg_path: null # Optional path to the hydra config.yaml file that was used to train the checkpoint
