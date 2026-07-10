@@ -120,6 +120,7 @@ class ACTPolicy(DVRKPolicy):
         kl_weight: float,
         use_language: bool,
         language_encoder: str,
+        merge_recovery_phases: bool,
         action_mode: Literal["hybrid_relative", "ego", "relative_endoscope"],
         norm_scheme: Literal["std", "min_max"],
         img_resize_cfg: DictConfig,
@@ -146,6 +147,7 @@ class ACTPolicy(DVRKPolicy):
         self.use_wrist_cams = use_wrist_cams
         self.history_chunk_size = history_chunk_size
         self.use_history = history_chunk_size > 0
+        self.merge_recovery_phases = merge_recovery_phases
 
         # create buffers for storing the prediction history
         self.action_history_buffer = deque(
@@ -338,7 +340,13 @@ class ACTPolicy(DVRKPolicy):
         return torch.stack(embeddings, dim=0).to(device)
 
     @staticmethod
-    def _normalize_command_text(command_text) -> list[str]:
+    def _normalize_command_text(command_text, merge_recovery_phases: bool) -> list[str]:
+        
+        # remove the "_recovery" suffix if merging recovery phases with their
+        # respective "standard" phases
+        if merge_recovery_phases:
+            command_text = command_text.replace("_recovery", "")
+        
         if command_text is None:
             return []
 
@@ -355,7 +363,7 @@ class ACTPolicy(DVRKPolicy):
 
     def _record_training_command_text(self, command_text) -> None:
         self.training_text_conditionings.extend(
-            self._normalize_command_text(command_text)
+            self._normalize_command_text(command_text, self.merge_recovery_phases)
         )
 
     def _serialize_policy_config(self) -> dict[str, object]:

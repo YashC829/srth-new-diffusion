@@ -12,6 +12,11 @@ norm_scheme: std
 use_language: true # Whether the policy conditions on language text.
 language_encoder: distilbert # Text encoder used by the policy for command strings.
 
+# if set to true, the model will not have distinct recovery and standard phases
+# for example, both hook_tissue and hook_tissue_recovery will be considered
+# hook_tissue
+merge_recovery_phases: true 
+
 # wrist cameras
 use_wrist_cams: true
 
