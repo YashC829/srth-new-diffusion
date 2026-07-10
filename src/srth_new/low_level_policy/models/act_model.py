@@ -314,7 +314,7 @@ class ACTPolicy(DVRKPolicy):
         if command_text is None:
             raise ValueError("command_text is required when use_language=True")
 
-        texts = self._normalize_command_text(command_text)
+        texts = self._normalize_command_text(command_text, self.merge_recovery_phases)
 
         if not texts:
             raise ValueError("command_text must contain at least one string")
@@ -345,7 +345,7 @@ class ACTPolicy(DVRKPolicy):
         # remove the "_recovery" suffix if merging recovery phases with their
         # respective "standard" phases
         if merge_recovery_phases:
-            command_text = command_text.replace("_recovery", "")
+            command_text = command_text.replace(" recovery", "")
         
         if command_text is None:
             return []

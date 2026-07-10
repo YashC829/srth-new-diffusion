@@ -63,6 +63,7 @@ class DiffusionTransformerPolicy(DVRKPolicy):
         action_dim: int,
         use_language: bool,
         language_encoder: str,
+        merge_recovery_phases: bool,
         action_mode: Literal["hybrid_relative", "ego", "relative_endoscope"],
         norm_scheme: Literal["std", "min_max"],
         img_resize_cfg: DictConfig,
@@ -90,6 +91,7 @@ class DiffusionTransformerPolicy(DVRKPolicy):
         self.hidden_dim = hidden_dim
         self.use_language = use_language
         self.language_encoder = language_encoder
+        self.merge_recovery_phases = merge_recovery_phases
         self.use_depth = use_depth
         self.img_resize_cfg = img_resize_cfg
         self.use_film = "film" in img_backbone_cfg.backbone_type
@@ -278,7 +280,7 @@ class DiffusionTransformerPolicy(DVRKPolicy):
             return None
         if command_text is None:
             raise ValueError("command_text is required when use_language=True")
-        texts = self._normalize_command_text(command_text)
+        texts = self._normalize_command_text(command_text, self.merge_recovery_phases)
         if not texts:
             raise ValueError("command_text must contain at least one string")
         embeddings = []
@@ -295,7 +297,11 @@ class DiffusionTransformerPolicy(DVRKPolicy):
         return torch.stack(embeddings, dim=0).to(device)
 
     @staticmethod
-    def _normalize_command_text(command_text) -> list[str]:
+    def _normalize_command_text(command_text, merge_recovery_phases: bool) -> list[str]:
+        # remove the "_recovery" suffix if merging recovery phases with their
+        # respective "standard" phases
+        if merge_recovery_phases:
+            command_text = command_text.replace(" recovery", "")
         if command_text is None:
             return []
         texts = [command_text] if isinstance(command_text, str) else list(command_text)
@@ -303,7 +309,7 @@ class DiffusionTransformerPolicy(DVRKPolicy):
 
     def _record_training_command_text(self, command_text) -> None:
         self.training_text_conditionings.extend(
-            self._normalize_command_text(command_text)
+            self._normalize_command_text(command_text, self.merge_recovery_phases)
         )
 
     # ── Image preprocessing ───────────────────────────────────────────────────
