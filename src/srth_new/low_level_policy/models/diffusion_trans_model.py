@@ -102,6 +102,7 @@ class DiffusionTransformerPolicy(DVRKPolicy):
         # ── Depth model ──────────────────────────────────────────────────────
         self.MAX_DEPTH_VAL = 0.3
         self.depth_model = load_depth_model("dav2") if use_depth else None
+        print("depth model:", dir(self.depth_model))
 
         # ── Image backbones (one per camera) ─────────────────────────────────
         img_backbones = [build_image_backbone(**img_backbone_cfg) for _ in camera_names]
