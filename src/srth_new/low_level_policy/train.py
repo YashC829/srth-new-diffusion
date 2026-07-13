@@ -14,7 +14,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch.optim.lr_scheduler import LambdaLR
 from tqdm import tqdm
 
-#from srth_new.low_level_policy.models.dvrk_policy import DVRKPolicy
+from srth_new.low_level_policy.models.dvrk_policy import DVRKPolicy
 from srth_new.low_level_policy import utils
 
 log = logging.getLogger(__name__)
