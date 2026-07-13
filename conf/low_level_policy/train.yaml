@@ -1,6 +1,6 @@
 defaults:
-  - dataloader: example                # Sample dataloader settings for low-level training.
-  - policy: act                        # ACT policy architecture and optimizer defaults.
+  - dataloader: complete                # Sample dataloader settings for low-level training.
+  - policy: diffusion_trans                        # ACT policy architecture and optimizer defaults.
   - override hydra/job_logging: custom # Write logs both to stdout and to the Hydra run dir.
   - _self_
 
@@ -16,19 +16,19 @@ ll_future_chunk_size: 60
 
 
 train:
-  num_train_steps: 300000
+  num_train_steps: 100      # orig is 300000
   num_warmup_steps: 50000
-  save_every: 10000            # Save a checkpoint every N training steps.
+  save_every: 50            # Save a checkpoint every N training steps. orig is 10000
   keep_every: 50000            # Prune checkpoints so only one representative checkpoint survives per bin.
-  validate_every: 10000         # Run the validation loop every N training steps.
+  validate_every: 50         # Run the validation loop every N training steps. orig is 10000
   checkpoint_dir: ${hydra:runtime.output_dir}/checkpoints
   resume_checkpoint: null   # Optional checkpoint path to resume model/optimizer/scheduler state from.
   training_hydra_cfg_path: null # Optional path to the hydra config.yaml file that was used to train the checkpoint
 
 wandb:
-  project: surpass_debugging              # W&B project name.
-  entity: gbyrd3-johns-hopkins-university # W&B team / user namespace.
-  name: ll_policy_test_full_actions_scoring       # Human-readable run name.
+  project: diffusion_training             # W&B project name.
+  entity: ychadda1-johns-hopkins-university # W&B team / user namespace.
+  name: diffusion_test       # Human-readable run name.
 
   # resume settings
   resume: false        # Set true to restore config state from a previous W&B run.
